@@ -33,6 +33,8 @@ header h1 b{color:var(--acc)}
 #legend{position:absolute;left:8px;bottom:8px;font-size:11px;color:#fff;background:rgba(10,20,14,.6);padding:4px 8px;border-radius:8px}
 .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border-bottom:1px solid var(--line)}
 .stat{background:var(--panel);padding:7px 8px}
+.shape{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;padding:9px 12px;background:var(--panel2);border-bottom:1px solid var(--line)}
+.shape b{font-size:18px;letter-spacing:-.01em}.shape span{font-size:12px;color:var(--mute)}
 .stat .k{font-size:10.5px;color:var(--mute);letter-spacing:.02em}
 .stat .v{font-family:var(--mono);font-size:15px;font-weight:600}
 .stat .v small{font-size:10px;color:var(--mute);font-weight:400;margin-left:2px}
@@ -80,6 +82,7 @@ h3{font-size:13px;margin:14px 0 6px;color:var(--acc2)}
     <div id="legend">필드 100 × 400 m · 격자 50 m</div>
   </div>
   <div id="side">
+    <div class="shape" id="shape"></div>
     <div class="stats" id="stats"></div>
     <div class="tabs">
       <button data-t="cam" class="on">카메라</button><button data-t="video">영상 분석</button><button data-t="manual">수동 샷</button><button data-t="set">설정</button><button data-t="hist">기록</button>
@@ -93,7 +96,7 @@ h3{font-size:13px;margin:14px 0 6px;color:var(--acc2)}
       <canvas id="preview" width="480" height="360"></canvas>
       <div class="msg" id="camMsg">카메라를 시작하세요.</div>
       <div class="row" style="font-size:12px;color:var(--mute)"><span id="camInfo"></span><button class="ghost" id="camReset" style="margin-left:auto;padding:6px 10px">공 다시 찾기</button></div>
-      <div class="note"><b>설치 방법</b> — 카메라를 공 높이에서 <b>타깃 라인과 수직(측면)</b>으로, 공에서 약 1 m 떨어뜨려 고정하세요. 공이 화면 가로로 지나가야 합니다. 배경은 어둡고 무광일수록 좋습니다. 미리보기에서 공을 탭하면 그 공을 기준으로 잡습니다.<br><b>스핀 측정</b> — 공 둘레에 굵은 검은 선(띠)을 하나 그리세요. 선의 자세 변화로 3축 회전을 계산합니다.</div>
+      <div class="note"><b>설치 방법</b> — 카메라를 공 높이에서 <b>타깃 라인과 수직(측면)</b>으로, 공에서 약 1 m 떨어뜨려 고정하세요. 공이 화면 가로로 지나가야 합니다. 배경은 어둡고 무광일수록 좋습니다. 미리보기에서 공을 탭하면 그 공을 기준으로 잡습니다.<br><b>스핀 측정(딤플)</b> — 공 표면의 딤플·로고 무늬가 프레임마다 어떻게 돌았는지로 3축 회전(백·사이드·라이플)을 계산합니다. 조건: <b>공 지름이 화면에서 60px 이상</b>(카메라를 가까이), <b>노출을 짧게</b>(밝은 조명), 그리고 <b>fps가 높을수록</b> 큰 스핀까지 측정됩니다(대략 fps×12 rpm까지, 예: 500fps → 6000rpm). 딤플이 잘 안 보이면 공에 검은 점·선을 몇 개 그리면 훨씬 안정적입니다.</div>
       <div class="note warnbox" id="camWarn" style="display:none"></div>
       <div class="note" id="usbHint"><b>OTG USB 카메라가 목록에 없나요?</b> 대부분의 안드로이드 폰은 USB 카메라를 브라우저에 보여주지 않습니다. <b>폰 스크린골프 안드로이드 앱</b>(APK)으로 열면 USB 카메라를 직접 연결해 사용할 수 있습니다.</div>
     </div>
@@ -119,8 +122,10 @@ h3{font-size:13px;margin:14px 0 6px;color:var(--acc2)}
     </div>
 
     <div class="pane" id="p-set">
+      <h3>골퍼</h3>
+      <div class="row"><label>타석</label><select id="sHand"><option value="R">오른손잡이</option><option value="L">왼손잡이</option></select></div>
       <h3>카메라 · 검출</h3>
-      <div class="row"><label>카메라↔공 거리 (m)</label><input type="number" id="sDist" value="1.0" step="0.05" min="0.2" max="5"></div>
+      <div class="row"><label>카메라↔공 거리 (m)</label><input type="number" id="sDist" value="0.5" step="0.01" min="0.2" max="5"><span style="font-size:12px;color:var(--mute)">렌즈~공 중심 직선거리, 줄자로 ±2cm 정확히 (속도·스핀 정확도에 직접 영향)</span></div>
       <div class="row"><label>공 진행 방향(화면)</label><select id="sDir"><option value="auto">자동</option><option value="right">오른쪽으로</option><option value="left">왼쪽으로</option></select></div>
       <div class="row"><label>밝기 임계값</label><input type="number" id="sThr" value="0" min="0" max="255"><span style="font-size:12px;color:var(--mute)">0 = 자동</span></div>
       <div class="row"><label>변화 임계값</label><input type="number" id="sDiff" value="30" min="5" max="120"></div>
@@ -128,6 +133,7 @@ h3{font-size:13px;margin:14px 0 6px;color:var(--acc2)}
       <div class="row"><label>처리 해상도(가로)</label><select id="sProc"><option>320</option><option selected>480</option><option>640</option></select></div>
       <div class="row"><label>USB 타임스탬프 보정</label><select id="sTsFix"><option value="1">켜기 (권장)</option><option value="0">끄기</option></select></div>
       <div class="row"><label>속도 보정 계수</label><input type="number" id="sCal" value="1.00" step="0.01" min="0.5" max="1.5"></div>
+      <div class="row"><label>스핀 측정 방식</label><select id="sSpinMode"><option value="auto">자동 (딤플·로고·마커 무늬)</option><option value="texture">표면 무늬만</option><option value="marker">마커 띠만 (구방식)</option></select></div>
       <div class="row"><label>스핀 미측정 시 백스핀</label><input type="number" id="sDefSpin" value="0" step="100"><span style="font-size:12px;color:var(--mute)">rpm, 0 = 속도·발사각으로 추정</span></div>
       <h3>환경</h3>
       <div class="row"><label>지면</label><select id="sSurf"><option value="fairway">페어웨이</option><option value="rough">러프</option><option value="green">그린(단단함)</option></select></div>
@@ -138,7 +144,7 @@ h3{font-size:13px;margin:14px 0 6px;color:var(--acc2)}
 
     <div class="pane" id="p-hist">
       <div class="row"><button class="ghost" id="hClear">기록 지우기</button><label style="min-width:auto;margin-left:auto"><input type="checkbox" id="hAll" checked> 이전 궤적 함께 표시</label></div>
-      <table><thead><tr><th>#</th><th>입력</th><th>속도</th><th>발사각</th><th>백/사이드</th><th>캐리</th><th>토탈</th><th>좌우</th></tr></thead><tbody id="hBody"></tbody></table>
+      <table><thead><tr><th>#</th><th>입력</th><th>속도</th><th>발사각</th><th>백/사이드</th><th>캐리</th><th>토탈</th><th>좌우</th><th>구질</th></tr></thead><tbody id="hBody"></tbody></table>
     </div>
   </div>
 </div>
@@ -299,11 +305,248 @@ const Golf = (() => {
 
 </script>
 <script>
+// ===== 표면 텍스처(딤플·로고·마커) 기반 3축 스핀 추정 =====
+// 원리: 공 영상의 밝기 패턴을 구면에 역투영한 뒤, 다음 프레임과 가장 잘 겹치는 3D 회전을 찾는다.
+//  - 조명에 의한 음영은 카메라에 고정되어 있고 딤플 무늬는 공과 함께 돈다 → 고역통과(국소 평균 제거)로 음영 제거
+//  - 프레임 쌍마다 회전벡터 φ를 거친 격자 → 미세 언덕오르기로 탐색(정규화 상호상관, NCC)
+//  - 딤플은 준주기 무늬라 가짜 정답(앨리어싱)이 생길 수 있으므로, 여러 프레임 간격(1·2·3칸)에서
+//    같은 각속도 ω가 동시에 맞는지 검사해 하나로 확정
+// 좌표: 카메라 좌표(x 오른쪽, y 아래, z 화면 안쪽). 구면 위 점 q = [dx, dy, -sqrt(1-dx²-dy²)] (카메라 쪽 반구)
+const SpinTex = (() => {
+  const DEG = Math.PI / 180;
+
+  function boxBlur(src, W, H, k) {
+    // 적분영상 기반 박스 평균 (반경 k)
+    const I = new Float64Array((W + 1) * (H + 1));
+    for (let y = 0; y < H; y++) {
+      let row = 0;
+      for (let x = 0; x < W; x++) { row += src[y * W + x]; I[(y + 1) * (W + 1) + x + 1] = I[y * (W + 1) + x + 1] + row; }
+    }
+    const out = new Float32Array(W * H);
+    for (let y = 0; y < H; y++) {
+      const y0 = Math.max(0, y - k), y1 = Math.min(H, y + k + 1);
+      for (let x = 0; x < W; x++) {
+        const x0 = Math.max(0, x - k), x1 = Math.min(W, x + k + 1);
+        const s = I[y1 * (W + 1) + x1] - I[y0 * (W + 1) + x1] - I[y1 * (W + 1) + x0] + I[y0 * (W + 1) + x0];
+        out[y * W + x] = s / ((y1 - y0) * (x1 - x0));
+      }
+    }
+    return out;
+  }
+
+  // 추적된 공 하나의 주변을 잘라 고역통과 영상 두 단계(미세/거친)를 만든다
+  function crop(f, b) {
+    const r = b.r;
+    if (r < 6) return null;
+    const half = Math.ceil(r * 1.15) + 2;
+    const x0 = Math.round(b.cx) - half, y0 = Math.round(b.cy) - half, W = half * 2 + 1, H = W;
+    if (x0 < 0 || y0 < 0 || x0 + W > f.w || y0 + H > f.h) return null;
+    const g = new Float32Array(W * H);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) g[y * W + x] = f.gray[(y0 + y) * f.w + x0 + x];
+    // 공 안쪽 픽셀만으로 국소 평균(정규화 합성곱) → 공/배경 경계가 무늬로 섞이지 않게
+    const cx = b.cx - x0, cy = b.cy - y0, mk = new Float32Array(W * H), gm = new Float32Array(W * H);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const i = y * W + x;
+      if ((x - cx) ** 2 + (y - cy) ** 2 <= (r * 0.95) ** 2) { mk[i] = 1; gm[i] = g[i]; }
+    }
+    // 1) 조명 음영 제거: 구면 법선의 2차 다항식(9항)으로 밝기를 최소제곱 근사해 뺀다
+    //    (한쪽 조명이면 단순 국소평균만으로는 음영 기울기가 남아 회전축이 기울어 보임)
+    const NB = 9, AtA = new Float64Array(NB * NB), Atb = new Float64Array(NB), basis = new Float64Array(NB);
+    const fillB = (x, y) => { const z = -Math.sqrt(Math.max(0, 1 - x * x - y * y)); basis[0] = 1; basis[1] = x; basis[2] = y; basis[3] = z; basis[4] = x * y; basis[5] = x * z; basis[6] = y * z; basis[7] = x * x; basis[8] = y * y; };
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const i = y * W + x; if (!mk[i]) continue;
+      fillB((x - cx) / r, (y - cy) / r);
+      for (let p = 0; p < NB; p++) { Atb[p] += basis[p] * g[i]; for (let q = 0; q < NB; q++) AtA[p * NB + q] += basis[p] * basis[q]; }
+    }
+    const coef = solve(AtA, Atb, NB);
+    const res = new Float32Array(W * H);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const i = y * W + x; if (!mk[i]) continue;
+      fillB((x - cx) / r, (y - cy) / r);
+      let v = 0; for (let p = 0; p < NB; p++) v += coef[p] * basis[p];
+      res[i] = g[i] - v;
+    }
+    // 2) 남은 저주파 제거(공 안쪽만 쓰는 정규화 합성곱)
+    const k = Math.max(2, Math.round(r * 0.16));
+    const lo = boxBlur(res, W, H, k), lm = boxBlur(mk, W, H, k);
+    const hp = new Float32Array(W * H);
+    for (let i = 0; i < W * H; i++) hp[i] = mk[i] ? res[i] - lo[i] / Math.max(1e-3, lm[i]) : 0;
+    const hpc = boxBlur(hp, W, H, Math.max(1, Math.round(r * 0.05)));
+    return { x0, y0, W, H, hp, hpc, cx: b.cx - x0, cy: b.cy - y0, ax: b.cx, ay: b.cy, r };
+  }
+
+  function solve(A, b, n) { // 가우스 소거 (부분 피벗)
+    const M = Array.from({ length: n }, (_, i) => [...A.slice(i * n, i * n + n), b[i]]);
+    for (let c = 0; c < n; c++) {
+      let p = c; for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+      [M[c], M[p]] = [M[p], M[c]];
+      const d = M[c][c] || 1e-9;
+      for (let r = 0; r < n; r++) if (r !== c) { const f = M[r][c] / d; for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k]; }
+    }
+    return M.map((row, i) => row[n] / (row[i] || 1e-9));
+  }
+
+  function sample(img, W, H, x, y) {
+    const xi = Math.floor(x), yi = Math.floor(y);
+    if (xi < 0 || yi < 0 || xi >= W - 1 || yi >= H - 1) return NaN;
+    const fx = x - xi, fy = y - yi, i = yi * W + xi;
+    return (img[i] * (1 - fx) + img[i + 1] * fx) * (1 - fy) + (img[i + W] * (1 - fx) + img[i + W + 1] * fx) * fy;
+  }
+
+  function rotm(p) { // 회전벡터 → 행렬 (Rodrigues)
+    const th = Math.hypot(p[0], p[1], p[2]);
+    if (th < 1e-9) return [1, 0, 0, 0, 1, 0, 0, 0, 1];
+    const x = p[0] / th, y = p[1] / th, z = p[2] / th, c = Math.cos(th), s = Math.sin(th), C = 1 - c;
+    return [c + x * x * C, x * y * C - z * s, x * z * C + y * s,
+      y * x * C + z * s, c + y * y * C, y * z * C - x * s,
+      z * x * C - y * s, z * y * C + x * s, c + z * z * C];
+  }
+
+  // 원근 보정: 공 중심을 향한 시선 방향 d로 카메라 z축을 돌리는 회전 V (열벡터 행렬, 행 우선 9개)
+  // 공이 화면을 가로지르면 시선이 바뀌어, 보정하지 않으면 '가짜 사이드스핀'이 생긴다.
+  function viewRot(tex, cam) {
+    if (!cam) return [1, 0, 0, 0, 1, 0, 0, 0, 1];
+    const d = [(tex.ax - cam.pu) / cam.fpx, (tex.ay - cam.pv) / cam.fpx, 1];
+    const l = Math.hypot(d[0], d[1], d[2]); d[0] /= l; d[1] /= l; d[2] /= l;
+    // z=[0,0,1] → d 최소 회전: 축 = z × d = [-d1, d0, 0]
+    const ax = [-d[1], d[0], 0], s = Math.hypot(ax[0], ax[1]);
+    if (s < 1e-9) return [1, 0, 0, 0, 1, 0, 0, 0, 1];
+    return rotm([ax[0] / s * Math.asin(s), ax[1] / s * Math.asin(s), 0]);
+  }
+  const mv = (m, x, y, z) => [m[0] * x + m[1] * y + m[2] * z, m[3] * x + m[4] * y + m[5] * z, m[6] * x + m[7] * y + m[8] * z];
+  const mtv = (m, x, y, z) => [m[0] * x + m[3] * y + m[6] * z, m[1] * x + m[4] * y + m[7] * z, m[2] * x + m[5] * y + m[8] * z];
+
+  // B 프레임 표본점(카메라 좌표 구면점 + 밝기) 준비
+  function points(B, stride, coarse) {
+    const img = coarse ? B.hpc : B.hp, pts = [];
+    const R = B.r * 0.86;
+    for (let y = Math.ceil(B.cy - R); y <= B.cy + R; y += stride) for (let x = Math.ceil(B.cx - R); x <= B.cx + R; x += stride) {
+      const dx = (x - B.cx) / B.r, dy = (y - B.cy) / B.r, q = dx * dx + dy * dy;
+      if (q > 0.74) continue;
+      const c = mv(B.V, dx, dy, -Math.sqrt(1 - q));
+      pts.push(c[0], c[1], c[2], img[y * B.W + x]);
+    }
+    return new Float32Array(pts);
+  }
+
+  // A를 회전 φ만큼 돌렸을 때 B와의 NCC (겹치는 면적이 작으면 감점)
+  function score(A, P, phi, coarse) {
+    const img = coarse ? A.hpc : A.hp;
+    const m = rotm(phi);
+    let n = 0, sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0;
+    const N = P.length / 4;
+    for (let i = 0; i < P.length; i += 4) {
+      const x = P[i], y = P[i + 1], z = P[i + 2];
+      // q_A = Rᵀ q_B
+      const gx = m[0] * x + m[3] * y + m[6] * z, gy = m[1] * x + m[4] * y + m[7] * z, gz = m[2] * x + m[5] * y + m[8] * z;
+      const L = A.V; // 카메라 좌표 → A의 국소(시선) 좌표
+      const ax = L[0] * gx + L[3] * gy + L[6] * gz, ay = L[1] * gx + L[4] * gy + L[7] * gz, az = L[2] * gx + L[5] * gy + L[8] * gz;
+      if (az > -0.3) continue; // A에서 보이지 않거나 가장자리
+      const a = sample(img, A.W, A.H, A.cx + ax * A.r, A.cy + ay * A.r);
+      if (a !== a) continue;
+      const b = P[i + 3];
+      n++; sa += a; sb += b; saa += a * a; sbb += b * b; sab += a * b;
+    }
+    if (n < Math.max(12, N * 0.25)) return -1;
+    const den = Math.sqrt(Math.max(1e-9, (n * saa - sa * sa) * (n * sbb - sb * sb)));
+    const ncc = (n * sab - sa * sb) / den;
+    return ncc * Math.min(1, n / (N * 0.55));
+  }
+
+  function climb(fn, start, steps) {
+    let best = start.slice(), bs = fn(best);
+    for (const st of steps) {
+      let improved = true, guard = 0;
+      while (improved && guard++ < 40) {
+        improved = false;
+        for (let k = 0; k < 3; k++) for (const sg of [1, -1]) {
+          const c = best.slice(); c[k] += sg * st;
+          const s = fn(c);
+          if (s > bs) { bs = s; best = c; improved = true; }
+        }
+      }
+    }
+    return { p: best, s: bs };
+  }
+
+  // 한 쌍(A→B)의 회전 탐색
+  function pair(A, B, thMax) {
+    const Pc = points(B, Math.max(1, Math.round(B.r / 8)), true);
+    const Pf = points(B, Math.max(1, Math.round(B.r / 14)), false);
+    const step = Math.min(5 * DEG, thMax / 4);
+    const cands = [];
+    for (let a = -thMax; a <= thMax + 1e-9; a += step) for (let b = -thMax; b <= thMax + 1e-9; b += step) for (let c = -thMax; c <= thMax + 1e-9; c += step) {
+      if (a * a + b * b + c * c > thMax * thMax) continue;
+      const s = score(A, Pc, [a, b, c], true);
+      if (s > 0) cands.push({ p: [a, b, c], s });
+    }
+    cands.sort((x, y) => y.s - x.s);
+    const top = [];
+    for (const c of cands) { if (top.every(t => Math.hypot(t.p[0] - c.p[0], t.p[1] - c.p[1], t.p[2] - c.p[2]) > step * 1.5)) top.push(c); if (top.length >= 6) break; }
+    const res = [];
+    for (const t of top) res.push(climb(p => score(A, Pf, p, false), t.p, [step / 2, step / 4, step / 8, step / 16]));
+    res.sort((a, b) => b.s - a.s);
+    return res.length ? { phi: res[0].p, s: res[0].s, all: res.slice(0, 4) } : null;
+  }
+
+  // 추적 프레임 목록 → 카메라 좌표 각속도 ω(rad/s)
+  // 공의 스핀은 짧은 구간에서 일정하다고 보고, 모든 프레임 쌍을 동시에 가장 잘 맞추는 ω 하나를 찾는다.
+  //  1) 거친 격자: 인접 프레임 쌍 전부의 점수 합 (흐린 고역통과 영상)
+  //  2) 상위 후보 → 1·2·3칸 간격 쌍 전부(선명한 영상)로 언덕오르기
+  function estimate(track, opts = {}) {
+    const maxRpm = opts.maxRpm || 12000;
+    let F = track.filter(s => s.tex);
+    if (F.length < 2) return null;
+    if (F.length > 10) F = F.slice(0, 10); // 계산량 제한: 임팩트 직후 10프레임 (스핀 감쇠 무시 가능)
+    for (const s of F) s.tex.V = viewRot(s.tex, opts.cam);
+    const near = [], all = [];
+    for (let gap = 1; gap <= 3; gap++) for (let i = 0; i + gap < F.length; i++) {
+      const dt = F[i + gap].t - F[i].t;
+      if (dt <= 0) continue;
+      const B = F[i + gap].tex;
+      const L = { A: F[i].tex, dt, gap, Pf: points(B, Math.max(1, Math.round(B.r / 12)), false) };
+      if (gap === 1) { L.Pc = points(B, Math.max(1, Math.round(B.r / 8)), true); near.push(L); }
+      all.push(L);
+    }
+    if (!near.length) return null;
+    const dt0 = near.reduce((a, L) => a + L.dt, 0) / near.length;
+    const coarseTotal = w => { let s = 0, n = 0; for (const L of near) { const v = score(L.A, L.Pc, [w[0] * L.dt, w[1] * L.dt, w[2] * L.dt], true); if (v > -1) { s += v; n++; } } return n ? s / near.length : -1; };
+    const fineTotal = w => { let s = 0, ws = 0; for (const L of all) { const v = score(L.A, L.Pf, [w[0] * L.dt, w[1] * L.dt, w[2] * L.dt], false); const k = L.gap === 1 ? 1 : 1.3; if (v > -1) s += v * k; ws += k; } return ws ? s / ws : -1; };
+
+    const thMax = Math.min(75 * DEG, maxRpm * 2 * Math.PI / 60 * dt0); // 프레임당 최대 회전
+    const step = Math.min(5 * DEG, thMax / 5);
+    const cands = [];
+    for (let a = -thMax; a <= thMax + 1e-9; a += step) for (let b = -thMax; b <= thMax + 1e-9; b += step) for (let c = -thMax; c <= thMax + 1e-9; c += step) {
+      if (a * a + b * b + c * c > thMax * thMax) continue;
+      const w = [a / dt0, b / dt0, c / dt0];
+      const s = coarseTotal(w);
+      if (s > 0) cands.push({ w, s });
+    }
+    cands.sort((x, y) => y.s - x.s);
+    const top = [];
+    const sw = step / dt0;
+    for (const c of cands) { if (top.every(t => Math.hypot(t.w[0] - c.w[0], t.w[1] - c.w[1], t.w[2] - c.w[2]) > sw * 1.5)) top.push(c); if (top.length >= 8) break; }
+    let best = null;
+    for (const t of top) {
+      const r = climb(fineTotal, t.w, [sw / 2, sw / 4, sw / 8, sw / 16]);
+      if (!best || r.s > best.s) best = r;
+    }
+    if (!best) return null;
+    const perFrameDeg = Math.hypot(...best.p) * dt0 / DEG;
+    return { w: best.p, conf: best.s, pairs: near.length, links: all.length, perFrameDeg, maxRpm: Math.min(maxRpm, 75 / 360 * 60 / dt0) };
+  }
+
+  return { crop, estimate, rotm, viewRot, mv };
+})();
+
+</script>
+<script>
 // ===== 카메라 영상에서 골프공 검출·추적 → 발사 조건(속도·방향·3축 스핀) 산출 =====
 // 가정: 카메라는 공 높이에서 타깃 라인과 수직(측면)으로 공을 바라봄.
 //   화면 가로 = 진행 방향, 화면 세로 = 높이, 공의 겉보기 크기 변화 = 좌우(카메라 쪽/반대쪽) 이동
 // 스핀: 공에 그린 '띠 모양 선(마커)'의 3D 자세 변화를 프레임 간 비교(TRIAD)해 회전 벡터를 구함
 const Detector = (() => {
+  const ST = typeof SpinTex !== 'undefined' ? SpinTex : require('./spintex.js');
   const M3 = {
     norm: a => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; },
     dot: (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2],
@@ -360,11 +603,46 @@ const Detector = (() => {
   // 원판(공) 안쪽을 채워 흰색 공 내부의 어두운 마커 구멍까지 덮는다
   function discFill(b) { return b.n / (Math.PI * b.r * b.rMaj); }
 
+  // 단조 사슬 볼록껍질 (px = [x0,y0,x1,y1,...]) → 꼭짓점 배열 [[x,y],...]
+  function convexHull(px) {
+    const P = [];
+    for (let k = 0; k < px.length; k += 2) P.push([px[k], px[k + 1]]);
+    P.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    const lo = [], up = [];
+    for (const p of P) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+    for (let i = P.length - 1; i >= 0; i--) { const p = P[i]; while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop(); up.push(p); }
+    up.pop(); lo.pop();
+    // 픽셀 모서리 보정: 꼭짓점 사이를 촘촘히 채워 원 맞춤이 고르게
+    const H = lo.concat(up), out = [];
+    for (let i = 0; i < H.length; i++) {
+      const a = H[i], b = H[(i + 1) % H.length], L = Math.hypot(b[0] - a[0], b[1] - a[1]), n = Math.max(1, Math.round(L));
+      for (let t = 0; t < n; t++) out.push([a[0] + (b[0] - a[0]) * t / n, a[1] + (b[1] - a[1]) * t / n]);
+    }
+    return out;
+  }
+  // 대수적 원 맞춤(Kåsa)
+  function fitCircle(pts) {
+    let sx = 0, sy = 0, n = pts.length;
+    for (const p of pts) { sx += p[0]; sy += p[1]; }
+    const mx = sx / n, my = sy / n;
+    let suu = 0, svv = 0, suv = 0, suuu = 0, svvv = 0, suvv = 0, svuu = 0;
+    for (const p of pts) {
+      const u = p[0] - mx, v = p[1] - my;
+      suu += u * u; svv += v * v; suv += u * v; suuu += u * u * u; svvv += v * v * v; suvv += u * v * v; svuu += v * u * u;
+    }
+    const det = suu * svv - suv * suv;
+    if (Math.abs(det) < 1e-9) return null;
+    const b1 = 0.5 * (suuu + suvv), b2 = 0.5 * (svvv + svuu);
+    const uc = (b1 * svv - b2 * suv) / det, vc = (suu * b2 - suv * b1) / det;
+    return { cx: mx + uc, cy: my + vc, r: Math.sqrt(uc * uc + vc * vc + (suu + svv) / n) };
+  }
+
   class ShotDetector {
     constructor(opts = {}) {
       this.o = Object.assign({
         ballD: 0.04267, camDist: 1.0, dir: 'auto', thr: 0, diffThr: 30,
-        stableFrames: 8, maxTrackTime: 0.3, useDepth: true, maxHla: 25,
+        stableFrames: 8, maxTrackTime: 0.3, useDepth: true, maxHla: 25, spinMode: 'auto', maxRpm: 12000,
       }, opts);
       this.reset();
     }
@@ -376,9 +654,11 @@ const Detector = (() => {
       if (this.o.thr > 0) return this.o.thr;
       const hist = new Uint32Array(256);
       for (let i = 0; i < gray.length; i++) hist[gray[i]]++;
-      let acc = 0; const target = gray.length * 0.995; let p = 255;
-      for (let i = 0; i < 256; i++) { acc += hist[i]; if (acc >= target) { p = i; break; } }
-      return Math.max(130, Math.min(235, p - 20));
+      const pct = q => { let acc = 0; const target = gray.length * q; for (let i = 0; i < 256; i++) { acc += hist[i]; if (acc >= target) return i; } return 255; };
+      // 배경(중앙값)과 가장 밝은 부분(상위 0.5%)의 중간쯤: 한쪽에서 비추는 조명으로 공 일부가 어두워도 원형을 유지
+      const med = pct(0.5), hi = pct(0.995);
+      this.bgMed = med;
+      return Math.max(med + 25, Math.min(235, med + 0.42 * (hi - med)));
     }
 
     // 공 내부 마커 → 구면 위 점들 → (중심방향 c, 선 방향 d)
@@ -416,6 +696,9 @@ const Detector = (() => {
       for (const p of pts) { const q = [p[0] - c[0], p[1] - c[1], p[2] - c[2]]; for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) C[i][j] += q[i] * q[j]; }
       let d = [1, 0.3, 0.1];
       for (let it = 0; it < 30; it++) d = M3.norm(M3.apply(C, d));
+      // 선(띠) 모양인지 검사: 주성분 분산 비율이 낮으면 딤플 그늘 등 잡음 → 마커 아님
+      const lam1 = M3.dot(d, M3.apply(C, d)), tr = C[0][0] + C[1][1] + C[2][2];
+      if (tr <= 0 || lam1 / tr < 0.7 || pts.length < cnt * 0.05) return null;
       const dc = M3.dot(d, c);
       d = M3.norm([d[0] - dc * c[0], d[1] - dc * c[1], d[2] - dc * c[2]]);
       return { c, d, n: pts.length };
@@ -450,6 +733,65 @@ const Detector = (() => {
       return best && isFinite(bd) ? best : null;
     }
 
+    // 공 크기·중심 정밀화: 배경보다 조금만 밝아도 공으로 보고(그늘진 쪽 포함) 모멘트로 원을 다시 구한다.
+    // 한쪽 조명으로 공의 밝은 부분만 잡히면 반지름이 작아져 속도가 크게 틀어지기 때문.
+    refine(f, b, moving) {
+      const { gray, w, h } = f, lo = (this.bgMed ?? 40) + 14, ref = this.ref;
+      const R = Math.max(b.rMaj, b.r) * 1.7 + 2;
+      const x0 = Math.max(0, Math.floor(b.cx - R)), x1 = Math.min(w - 1, Math.ceil(b.cx + R));
+      const y0 = Math.max(0, Math.floor(b.cy - R)), y1 = Math.min(h - 1, Math.ceil(b.cy + R));
+      // 국소 마스크 → 바깥에서 채우기(flood fill)로 내부 구멍(그늘진 딤플·마커)을 메운다.
+      // 구멍이 한쪽으로 몰리면 중심이 밝은 쪽으로 치우쳐, 백스핀이 사이드스핀처럼 보이는 오차가 생김.
+      const LW = x1 - x0 + 1, LH = y1 - y0 + 1, m = new Uint8Array(LW * LH);
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+        if ((x - b.cx) ** 2 + (y - b.cy) ** 2 > R * R) continue;
+        const i = y * w + x, g = gray[i];
+        if (g <= lo) continue;
+        if (moving && ref && Math.abs(g - ref[i]) < 10) continue;
+        m[(y - y0) * LW + x - x0] = 1;
+      }
+      const out = new Uint8Array(LW * LH), st = [];
+      for (let x = 0; x < LW; x++) { st.push(x, (LH - 1) * LW + x); }
+      for (let y = 0; y < LH; y++) { st.push(y * LW, y * LW + LW - 1); }
+      while (st.length) {
+        const k = st.pop();
+        if (out[k] || m[k]) continue;
+        out[k] = 1;
+        const x = k % LW, y = (k / LW) | 0;
+        if (x > 0) st.push(k - 1); if (x < LW - 1) st.push(k + 1); if (y > 0) st.push(k - LW); if (y < LH - 1) st.push(k + LW);
+      }
+      let n = 0, sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
+      const px = [];
+      for (let k = 0; k < LW * LH; k++) {
+        if (out[k]) continue; // 바깥이 아니면 공(구멍 포함)
+        const x = x0 + (k % LW), y = y0 + ((k / LW) | 0);
+        n++; sx += x; sy += y; sxx += x * x; syy += y * y; sxy += x * y; px.push(x, y);
+      }
+      if (n < b.n * 0.8) return b;
+      const cx = sx / n, cy = sy / n;
+      const vxx = sxx / n - cx * cx, vyy = syy / n - cy * cy, vxy = sxy / n - cx * cy;
+      const tmp = Math.sqrt(((vxx - vyy) / 2) ** 2 + vxy * vxy);
+      const l1 = (vxx + vyy) / 2 + tmp, l2 = Math.max(1e-6, (vxx + vyy) / 2 - tmp);
+      let r = 2 * Math.sqrt(l2), ccx = cx, ccy = cy;
+      if (l1 / l2 < 1.3) {
+        // 번짐이 적으면 외곽선 기준 원 맞춤: 볼록껍질(딤플이 파먹은 오목한 홈은 건너뜀) 꼭짓점에 원을 최소제곱 적합
+        const hull = convexHull(px);
+        const c = hull.length >= 8 ? fitCircle(hull) : null;
+        if (c && Math.hypot(c.cx - cx, c.cy - cy) < r * 0.3 && c.r > r * 0.8 && c.r < r * 1.3) {
+          // 화면 가장자리의 공은 원근 때문에 바깥쪽으로 늘어난 타원 → 거리 계산에는 짧은 반지름을 쓴다
+          ccx = c.cx; ccy = c.cy; r = (c.r + 0.5) * 2 / (1 + Math.sqrt(l1 / l2));
+        }
+        else {
+          const d = new Float32Array(px.length / 2);
+          for (let k = 0; k < d.length; k++) d[k] = Math.hypot(px[2 * k] - cx, px[2 * k + 1] - cy);
+          d.sort();
+          r = d[Math.floor(d.length * 0.95)] / 0.9747 + 0.5;
+        }
+      }
+      if (r < b.r * 0.9 || r > b.r * 2) return b; // 주변 물체와 섞였으면 원래 값 유지
+      return Object.assign({}, b, { n, cx: ccx, cy: ccy, l1, l2, r, rMaj: 2 * Math.sqrt(l1) });
+    }
+
     // 흰 공 내부 마커(어두운 선) 때문에 생기는 구멍을 메움: 3x3 팽창 후 침식
     closeMask(mask, w, h, iter = 1) {
       const tmp = new Uint8Array(w * h);
@@ -477,8 +819,9 @@ const Detector = (() => {
       if (this.state === 'search') {
         const mask = new Uint8Array(w * h);
         for (let i = 0; i < w * h; i++) mask[i] = gray[i] > thr ? 1 : 0;
-        this.closeMask(mask, w, h, this.cand ? Math.max(1, Math.round(this.cand.r * 0.3)) : 2);
-        const bs = blobs(mask, w, h, 10).filter(b => b.l2 / b.l1 > 0.55 && discFill(b) > 0.6 && discFill(b) < 1.35);
+        this.closeMask(mask, w, h, this.cand ? Math.max(2, Math.round(this.cand.r * 0.4)) : Math.max(2, Math.round(w / 100))); // 마커 띠로 둘로 갈라진 공도 하나로
+        // 한쪽 조명이면 밝은 쪽만 초승달처럼 잡히므로, 먼저 정밀화(그늘 포함)한 뒤 원형인지 검사
+        const bs = blobs(mask, w, h, 10).filter(b => b.n < w * h * 0.2).map(b => this.refine(f, b, false)).filter(b => b.l2 / b.l1 > 0.55 && discFill(b) > 0.6 && discFill(b) < 1.35);
         let best = null;
         if (this.seed) { let bd = Infinity; for (const b of bs) { const d = Math.hypot(b.cx - this.seed.u, b.cy - this.seed.v); if (d < bd && d < Math.max(30, b.r * 4)) { bd = d; best = b; } } }
         else for (const b of bs) if (!best || b.n > best.n) best = b;
@@ -524,19 +867,28 @@ const Detector = (() => {
     }
 
     trackFrame(f, thr) {
-      const b = this.detectMoving(f, thr);
+      let b = this.detectMoving(f, thr);
       if (!b) { if (this.track.length) this.miss++; return; }
+      b = this.refine(f, b, true);
       this.miss = 0;
       if (!this.dirSign) this.dirSign = Math.sign(b.cx - this.rest.cx) || 1;
       const blur = b.l1 / b.l2;
       const mk = blur < 1.6 ? this.marker(f, b) : null;
-      this.track.push({ t: f.t, u: b.cx, v: b.cy, r: b.r, blur, mk });
+      // 딤플 텍스처용 잘라낸 영상 (모션 블러가 크면 무늬가 지워지므로 제외)
+      const tex = (this.o.spinMode !== 'marker' && blur < 1.4) ? ST.crop(f, b) : null;
+      this.track.push({ t: f.t, u: b.cx, v: b.cy, r: b.r, blur, mk, tex });
     }
 
     computeShot(w, h) {
       const o = this.o, r0 = this.rest.r;
-      const fpx = 2 * r0 * o.camDist / o.ballD; // 초점거리(px)
       const pu = w / 2, pv = h / 2;
+      // 초점거리(px): 사용자가 잰 값은 카메라↔공 직선거리 ρ0 → 깊이 Z0 = ρ0·cosθ0 로 바꿔 f = 2·r0·Z0/D (θ0도 f에 의존 → 반복)
+      let fpx = 2 * r0 * o.camDist / o.ballD;
+      for (let k = 0; k < 4; k++) {
+        const q = Math.hypot(this.rest.cx - pu, this.rest.cy - pv) / fpx;
+        fpx = 2 * r0 * o.camDist / Math.sqrt(1 + q * q) / o.ballD;
+      }
+      const z0 = fpx * o.ballD / (2 * r0);
       // 크기 이상치(가림·경계·잔상) 제거
       const rs = this.track.map(s => s.r).sort((a, b) => a - b);
       const rMed = rs[rs.length >> 1];
@@ -544,8 +896,10 @@ const Detector = (() => {
       if (tr.length < 2) return { ok: false, reason: '유효 프레임 부족', frames: tr.length, spinPairs: 0 };
       // 공 크기(반지름)는 잡음이 크므로 평균 후 선형적합
       const P = tr.map(s => {
-        const Z = o.useDepth ? fpx * o.ballD / (2 * s.r) : o.camDist;
-        return { t: s.t, X: (s.u - pu) * Z / fpx, Y: (s.v - pv) * Z / fpx, Z };
+        // 구의 상은 타원이며 짧은 반지름 b = f·R/Z (Z = 깊이) → refine()이 b를 돌려줌
+        const tx = (s.u - pu) / fpx, ty = (s.v - pv) / fpx;
+        const Z = o.useDepth ? fpx * o.ballD / (2 * s.r) : z0;
+        return { t: s.t, X: tx * Z, Y: ty * Z, Z };
       });
       const fit = key => {
         const n = P.length; let st = 0, sv = 0, stt = 0, stv = 0;
@@ -553,7 +907,16 @@ const Detector = (() => {
         const den = n * stt - st * st;
         return den === 0 ? 0 : (n * stv - st * sv) / den;
       };
-      const vc = [fit('X'), fit('Y'), fit('Z')];
+      // 깊이(좌우 방향)는 공 크기에 의존해 잡음이 크다: 화면 가장자리 근처 프레임은 빼고, 중앙값 기울기(Theil–Sen)로 강건하게
+      const PZ = P.filter((p, k) => { const sv = tr[k]; return sv.u > sv.r * 1.6 && sv.u < w - sv.r * 1.6 && sv.v > sv.r * 1.6 && sv.v < h - sv.r * 1.6; });
+      const theil = (A, key) => {
+        if (A.length < 2) return 0;
+        const sl = [];
+        for (let i = 0; i < A.length; i++) for (let j = i + 1; j < A.length; j++) if (A[j].t > A[i].t) sl.push((A[j][key] - A[i][key]) / (A[j].t - A[i].t));
+        sl.sort((x, y) => x - y);
+        return sl.length ? sl[sl.length >> 1] : 0;
+      };
+      const vc = [fit('X'), fit('Y'), o.useDepth ? theil(PZ.length >= 2 ? PZ : P, 'Z') : 0];
       const s = this.dirSign;
       // 카메라 좌표 → 월드(ENU: x 오른쪽, y 전방, z 위)
       const M = s > 0 ? [[0, 0, -1], [1, 0, 0], [0, -1, 0]] : [[0, 0, 1], [-1, 0, 0], [0, -1, 0]];
@@ -580,17 +943,21 @@ const Detector = (() => {
         // 카메라 좌표계의 v축이 아래 방향이므로 회전 그대로 사용(오른손 좌표계)
         ws.push(best.axis.map(x => x * best.th / dt));
       }
-      let spin = null, spinFrom = 'none';
-      if (ws.length) {
+      let spin = null, spinFrom = 'none', spinConf = 0, spinMax = 0;
+      const toRpm = wc => M3.apply(M, wc).map(x => x * 60 / (2 * Math.PI));
+      let markerSpin = null;
+      if (ws.length && o.spinMode !== 'texture') {
         const med = k => { const a = ws.map(x => x[k]).sort((p, q) => p - q); return a[a.length >> 1]; };
-        const wc = [med(0), med(1), med(2)];
-        const wwld = M3.apply(M, wc);
-        spin = wwld.map(x => x * 60 / (2 * Math.PI));
-        spinFrom = 'marker';
+        markerSpin = toRpm([med(0), med(1), med(2)]);
       }
+      // 딤플/표면 텍스처 기반 3축 스핀
+      let te = null;
+      if (o.spinMode !== 'marker') { try { te = ST.estimate(tr, { maxRpm: o.maxRpm, cam: { fpx, pu, pv } }); } catch (e) { console.warn(e); te = null; } }
+      if (te && te.conf >= 0.3 && te.links >= 3) { /* 쌍 1개뿐이면 일관성 검사가 안 되므로 버림 */ spin = toRpm(te.w); spinFrom = 'texture'; spinConf = te.conf; spinMax = te.maxRpm; }
+      else if (markerSpin && o.spinMode === 'marker') { spin = markerSpin; spinFrom = 'marker'; } // 자동 모드는 텍스처(마커도 텍스처로 처리)만 신뢰
       const dtTot = tr[tr.length - 1].t - tr[0].t;
       const ok = speed > 3 && speed < 95 && vla > -10 && vla < 70;
-      return { ok, reason: ok ? '' : `비정상 값 (속도 ${speed.toFixed(1)} m/s, 발사각 ${vla.toFixed(1)}°)`, speed, vla, hla, spin, spinFrom, frames: tr.length, spinPairs: ws.length, dtTot, fpx };
+      return { ok, reason: ok ? '' : `비정상 값 (속도 ${speed.toFixed(1)} m/s, 발사각 ${vla.toFixed(1)}°)`, speed, vla, hla, spin, spinFrom, spinConf, spinMax, texPairs: te ? te.pairs : 0, frames: tr.length, spinPairs: ws.length, dtTot, fpx };
     }
   }
   return { ShotDetector, blobs };
@@ -605,9 +972,10 @@ const Detector = (() => {
   const YD = 0.9144;
 
   // ---------- 설정 ----------
-  const SKEYS = ['sDist', 'sDir', 'sThr', 'sDiff', 'sDepth', 'sProc', 'sTsFix', 'sCal', 'sDefSpin', 'sSurf', 'sWind', 'sWindDir', 'sAlt', 'sTemp', 'sUnit'];
+  const SKEYS = ['sHand', 'sSpinMode', 'sDist', 'sDir', 'sThr', 'sDiff', 'sDepth', 'sProc', 'sTsFix', 'sCal', 'sDefSpin', 'sSurf', 'sWind', 'sWindDir', 'sAlt', 'sTemp', 'sUnit'];
   try { const saved = JSON.parse(localStorage.getItem('psg-settings') || '{}'); for (const k of SKEYS) if (saved[k] != null) $(k).value = saved[k]; } catch (e) { }
   const S = () => ({
+    hand: $('sHand').value, spinMode: $('sSpinMode').value,
     dist: +$('sDist').value || 1, dir: $('sDir').value, thr: +$('sThr').value || 0, diff: +$('sDiff').value || 30,
     depth: $('sDepth').value === '1', proc: +$('sProc').value, cal: +$('sCal').value || 1, defSpin: +$('sDefSpin').value || 0,
     surf: $('sSurf').value, wind: +$('sWind').value || 0, windDir: +$('sWindDir').value, alt: +$('sAlt').value || 0, temp: +$('sTemp').value, unit: $('sUnit').value,
@@ -660,11 +1028,39 @@ const Detector = (() => {
     const s = S();
     if (!sh.ok) { chip(sh.reason, 'err'); return; }
     let spin, spinNote;
-    if (sh.spin) { spin = sh.spin; spinNote = `마커 ${sh.spinPairs}쌍`; }
-    else { const b = s.defSpin > 0 ? s.defSpin : estSpin(sh.speed * s.cal, sh.vla); spin = [b, 0, 0]; spinNote = '추정(마커 없음)'; }
+    if (sh.spin && sh.spinFrom === 'texture') { spin = sh.spin; spinNote = `딤플/표면 무늬 · 신뢰도 ${(sh.spinConf * 100).toFixed(0)}% · ${sh.texPairs}쌍`; }
+    else if (sh.spin) { spin = sh.spin; spinNote = `마커 ${sh.spinPairs}쌍`; }
+    else {
+      const b = s.defSpin > 0 ? s.defSpin : estSpin(sh.speed * s.cal, sh.vla); spin = [b, 0, 0];
+      spinNote = '측정 실패 → 백스핀 추정·사이드 0 (구질은 출발 방향만 반영)';
+      const fps = sh.frames > 1 && sh.dtTot > 0 ? (sh.frames - 1) / sh.dtTot : 0;
+      if (fps) spinNote += ` · ${fps.toFixed(0)}fps에서는 약 ${(75 / 360 * 60 * fps).toFixed(0)}rpm 이하만 측정 가능`;
+    }
     const L = { speed: sh.speed * s.cal, vla: sh.vla, hla: sh.hla, spin };
-    launch(L, src, { spinNote, frames: sh.frames });
+    launch(L, src, { spinNote, frames: sh.frames, spinFrom: sh.spin ? sh.spinFrom : 'est' });
     chip(`${src} 샷 · ${sh.frames}프레임 · 스핀 ${spinNote}`, 'ok');
+  }
+
+  // ---------- 구질 판정 ----------
+  // 출발 방향(방향각)과 휘는 정도(출발선 대비 낙하지점 좌우 차이 / 캐리)로 분류. 왼손잡이는 이름이 좌우 반대.
+  function shotShape(shot) {
+    const { L, res } = shot, right = S().hand !== 'L';
+    const startDir = L.hla; // +: 오른쪽 출발
+    const dev = res.carryX - res.carryY * Math.tan(L.hla * Math.PI / 180); // 출발선에서 낙하지점까지의 좌우 휨(m, +오른쪽)
+    const pct = res.carry > 1 ? dev / res.carry * 100 : 0;
+    const curveR = pct > 0; // 오른쪽으로 휨
+    const mag = Math.abs(pct);
+    // 오른손잡이 기준: 오른쪽으로 휘면 페이드/슬라이스, 왼쪽으로 휘면 드로우/훅
+    const fadeSide = right ? curveR : !curveR;
+    const curve = mag < 2.5 ? '' : mag < 7 ? (fadeSide ? '페이드' : '드로우') : (fadeSide ? '슬라이스' : '훅');
+    const startOut = right ? startDir > 2.5 : startDir < -2.5;  // 바깥쪽(오른손: 오른쪽) 출발 = 푸시
+    const startIn = right ? startDir < -2.5 : startDir > 2.5;   // 안쪽 출발 = 풀
+    const start = startOut ? '푸시' : startIn ? '풀' : '';
+    const name = start && curve ? `${start} ${curve}` : start || curve || '스트레이트';
+    const color = curve.includes('슬라이스') || curve.includes('훅') ? '#ff8a6b' : curve ? '#ffd36b' : start ? '#9fd3ff' : '#5fd39a';
+    const side = v => v >= 0 ? '오른쪽' : '왼쪽';
+    const desc = `${Math.abs(startDir) < 0.5 ? '정면' : side(startDir) + ' ' + Math.abs(startDir).toFixed(1) + '°'} 출발 · ${mag < 0.5 ? '거의 휘지 않음' : side(dev) + '으로 ' + Math.abs(dev).toFixed(1) + 'm 휨'}`;
+    return { name, color, desc, dev, pct };
   }
 
   const fmt = (v, d = 1) => (v == null || !isFinite(v)) ? '—' : v.toFixed(d);
@@ -685,10 +1081,12 @@ const Detector = (() => {
       ['최고 높이', r ? fmt(dist(r.apex)) : '—', U],
       ['좌우 편차', r ? (r.totalX >= 0 ? 'R ' : 'L ') + fmt(dist(Math.abs(r.totalX))) : '—', U],
     ];
+    const shp = cur ? shotShape(cur) : null;
+    $('shape').innerHTML = shp ? `<b style="color:${shp.color}">${shp.name}</b><span>${shp.desc}${sp ? ` · 스핀축 ${sp.axisTilt >= 0 ? '오른쪽' : '왼쪽'} ${Math.abs(sp.axisTilt).toFixed(1)}°` : ''}</span>` : '<span>구질: 샷을 기다리는 중</span>';
     el.innerHTML = items.map(([k, v, u, sub]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}<small>${u}</small></div>${sub ? `<div class="k">${sub}</div>` : ''}</div>`).join('');
     if (r) {
       const ob = isOB(r);
-      if (!anim) { $('hudK').textContent = '캐리'; $('hudCarry').textContent = `${fmt(dist(r.carry))} ${U}`; }
+      if (!anim) { $('hudK').innerHTML = `캐리 · <b style="color:${shp.color}">${shp.name}</b>`; $('hudCarry').textContent = `${fmt(dist(r.carry))} ${U}`; }
       $('hudSub').innerHTML = `토탈 ${fmt(dist(r.total))} ${U} · 체공 ${fmt(r.flightTime)}s${ob ? ' · <span style="color:var(--bad)">OB</span>' : ''}<br><span class="k">${cur.src}${cur.extra.spinNote ? ' · 스핀 ' + cur.extra.spinNote : ''}</span>`;
     }
   }
@@ -697,7 +1095,7 @@ const Detector = (() => {
   function renderHist() {
     $('hBody').innerHTML = shots.slice().reverse().map(s => {
       const sp = Golf.describeSpin(s.L.spin);
-      return `<tr data-id="${s.id}" class="${s === cur ? 'sel' : ''}"><td>${s.id}</td><td>${s.src}</td><td>${fmt(s.L.speed)}</td><td>${fmt(s.L.vla)}</td><td>${fmt(sp.back, 0)}/${fmt(sp.side, 0)}</td><td>${fmt(dist(s.res.carry))}</td><td>${fmt(dist(s.res.total))}${isOB(s.res) ? '<br><span style="color:var(--bad)">OB</span>' : ''}</td><td>${fmt(dist(s.res.totalX))}</td></tr>`;
+      return `<tr data-id="${s.id}" class="${s === cur ? 'sel' : ''}"><td>${s.id}</td><td>${s.src}</td><td>${fmt(s.L.speed)}</td><td>${fmt(s.L.vla)}</td><td>${fmt(sp.back, 0)}/${fmt(sp.side, 0)}</td><td>${fmt(dist(s.res.carry))}</td><td>${fmt(dist(s.res.total))}${isOB(s.res) ? '<br><span style="color:var(--bad)">OB</span>' : ''}</td><td>${fmt(dist(s.res.totalX))}</td><td style="color:${shotShape(s).color}">${shotShape(s).name}</td></tr>`;
     }).join('');
     $('hBody').querySelectorAll('tr').forEach(tr => tr.onclick = () => { cur = shots.find(s => s.id == tr.dataset.id); renderStats(); renderHist(); startAnim(); });
   }
@@ -894,6 +1292,11 @@ const Detector = (() => {
     if (path.length < 2) return path[0];
     const ground = path.map(p => [p[0], p[1], 0]);
     if (!CAM.side) line3(ground, main ? 'rgba(0,0,0,.28)' : 'rgba(0,0,0,.12)', main ? 2 : 1);
+    if (main && !CAM.side) {
+      // 출발 방향선(점선): 이 선에서 얼마나 휘었는지로 구질을 판단
+      const a = shot.L.hla * Math.PI / 180, Lc = res.carry * 1.05;
+      line3([[0, 0, 0.05], [Math.sin(a) * Lc, Math.cos(a) * Lc, 0.05]], 'rgba(255,255,255,.55)', 1.2, [5, 6]);
+    }
     line3(path, main ? '#ffe45c' : 'rgba(255,255,255,.45)', main ? 2.5 : 1.2);
     const last = path[path.length - 1];
     if (main) {
@@ -978,7 +1381,7 @@ const Detector = (() => {
     };
   }
   function detOpts(det) {
-    const s = S(), o = { camDist: s.dist, dir: s.dir, thr: s.thr, diffThr: s.diff, useDepth: s.depth };
+    const s = S(), o = { camDist: s.dist, dir: s.dir, thr: s.thr, diffThr: s.diff, useDepth: s.depth, spinMode: s.spinMode };
     if (det) det.set(o); else { camDet?.set(o); vidDet?.set(o); }
     return o;
   }
@@ -992,7 +1395,11 @@ const Detector = (() => {
     for (const p of out.track || []) { c.strokeStyle = p.mk ? '#ff6b6b' : '#ffb454'; c.beginPath(); c.arc(p.u, p.v, p.r, 0, 7); c.stroke(); }
     c.fillStyle = 'rgba(0,0,0,.55)'; c.fillRect(0, 0, 150, 18); c.fillStyle = '#fff'; c.font = '11px monospace';
     c.fillText(`${out.state} thr=${out.thr | 0}`, 4, 13);
-    if (msgEl) msgEl.textContent = out.msg;
+    if (msgEl) {
+      let m = out.msg;
+      if (out.rest && out.rest.r < 30) m += ` · 공 지름 ${(out.rest.r * 2).toFixed(0)}px: 딤플 스핀에는 작습니다(60px 이상 권장 — 카메라를 가까이)`;
+      msgEl.textContent = m;
+    }
   }
 
   // ---------- 실시간 카메라 ----------

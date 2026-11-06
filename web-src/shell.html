@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d1a12">
+<title>폰 스크린골프 — 볼 트래킹 & 궤적 시뮬레이터</title>
+<style>
+:root{
+  --bg:#0b1510; --panel:#122019; --panel2:#18291f; --line:#25392d; --ink:#e8f0ea; --mute:#8ea596;
+  --acc:#d9f26b; --acc2:#5fd39a; --warn:#ffb454; --bad:#ff6b6b; --r:12px;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+body{padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+header{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line)}
+header h1{font-size:15px;margin:0;font-weight:700;letter-spacing:-.01em}
+header h1 b{color:var(--acc)}
+#chip{margin-left:auto;font-size:12px;padding:3px 9px;border-radius:99px;background:var(--panel2);color:var(--mute);white-space:nowrap;max-width:55vw;overflow:hidden;text-overflow:ellipsis}
+#chip.ok{color:#0b1510;background:var(--acc2)} #chip.live{color:#0b1510;background:var(--acc)} #chip.err{color:#fff;background:var(--bad)}
+.wrap{display:flex;flex-direction:column}
+@media (min-width:900px){.wrap{flex-direction:row;height:calc(100vh - 46px)} #stage{flex:1;height:100%!important} #side{width:420px;overflow:auto;border-left:1px solid var(--line)}}
+#stage{position:relative;height:52vh;min-height:300px;background:#89b7d6;touch-action:none}
+#field{width:100%;height:100%;display:block}
+.views{position:absolute;left:8px;top:8px;display:flex;gap:4px;flex-wrap:wrap;max-width:54%;z-index:1}
+.views button,.btn{font:inherit;font-size:12px;border:1px solid rgba(255,255,255,.15);background:rgba(10,20,14,.72);color:var(--ink);padding:6px 10px;border-radius:8px;cursor:pointer;backdrop-filter:blur(6px)}
+.views button.on{background:var(--acc);color:#0b1510;border-color:var(--acc)}
+.hud{position:absolute;right:8px;top:8px;max-width:44%;pointer-events:none;background:rgba(10,20,14,.78);border-radius:10px;padding:8px 10px;font-family:var(--mono);font-size:12px;min-width:120px;backdrop-filter:blur(6px)}
+.hud .big{font-size:22px;color:var(--acc);font-weight:700;line-height:1.1}
+.hud .k{color:var(--mute)}
+#replay{position:absolute;right:8px;bottom:8px}
+#legend{position:absolute;left:8px;bottom:8px;font-size:11px;color:#fff;background:rgba(10,20,14,.6);padding:4px 8px;border-radius:8px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border-bottom:1px solid var(--line)}
+.stat{background:var(--panel);padding:7px 8px}
+.shape{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;padding:9px 12px;background:var(--panel2);border-bottom:1px solid var(--line)}
+.shape b{font-size:18px;letter-spacing:-.01em}.shape span{font-size:12px;color:var(--mute)}
+.stat .k{font-size:10.5px;color:var(--mute);letter-spacing:.02em}
+.stat .v{font-family:var(--mono);font-size:15px;font-weight:600}
+.stat .v small{font-size:10px;color:var(--mute);font-weight:400;margin-left:2px}
+.tabs{display:flex;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:2;overflow-x:auto}
+.tabs button{flex:1;font:inherit;font-size:13px;background:none;border:0;color:var(--mute);padding:11px 8px;border-bottom:2px solid transparent;white-space:nowrap;cursor:pointer}
+.tabs button.on{color:var(--ink);border-bottom-color:var(--acc)}
+.pane{display:none;padding:14px}
+.pane.on{display:block}
+.row{display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap}
+.row label{color:var(--mute);font-size:12.5px;min-width:110px}
+select,input[type=number],input[type=text]{font:inherit;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:7px 9px;min-width:0}
+input[type=number]{width:90px}
+input[type=range]{flex:1;accent-color:var(--acc);min-width:120px}
+.primary{font:inherit;font-weight:700;background:var(--acc);color:#0b1510;border:0;border-radius:10px;padding:11px 16px;cursor:pointer}
+.primary:disabled{opacity:.4}
+.ghost{font:inherit;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px 14px;cursor:pointer}
+.note{font-size:12px;color:var(--mute);background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 11px;margin:10px 0}
+.note b{color:var(--ink)}
+.warnbox{border-color:#5a4520;background:#21190c;color:#f3d6a2}
+#preview,#vprev{width:100%;border-radius:10px;background:#000;display:block;touch-action:manipulation}
+.msg{font-family:var(--mono);font-size:12px;color:var(--acc);margin-top:6px;min-height:18px}
+.sl{display:grid;grid-template-columns:96px 1fr 70px;gap:8px;align-items:center;margin:6px 0}
+.sl span{font-size:12.5px;color:var(--mute)} .sl output{font-family:var(--mono);text-align:right}
+.presets{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.presets button{font:inherit;font-size:12px;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:99px;padding:6px 11px;cursor:pointer}
+table{width:100%;border-collapse:collapse;font-size:12px;font-family:var(--mono)}
+th,td{padding:6px 4px;border-bottom:1px solid var(--line);text-align:right}
+th{color:var(--mute);font-weight:500;font-family:system-ui,sans-serif}
+td:first-child,th:first-child{text-align:left}
+tr.sel td{color:var(--acc)} tbody tr{cursor:pointer}
+h3{font-size:13px;margin:14px 0 6px;color:var(--acc2)}
+.bar{height:6px;background:var(--panel2);border-radius:3px;overflow:hidden}.bar i{display:block;height:100%;background:var(--acc);width:0}
+</style>
+</head>
+<body>
+<header><h1>⛳ 폰 스크린골프 <b>Tracker</b> <span id="appBadge" style="display:none;font-size:10px;font-weight:600;color:#0b1510;background:var(--acc2);padding:2px 6px;border-radius:6px;vertical-align:middle">APP</span></h1><span id="chip">대기</span></header>
+<div class="wrap">
+  <div id="stage">
+    <canvas id="field"></canvas>
+    <div class="views">
+      <button data-v="behind" class="on">후방</button><button data-v="follow">추적</button><button data-v="top">상공</button><button data-v="side">측면</button>
+    </div>
+    <div class="hud" id="hud"><div class="k" id="hudK">캐리</div><div class="big" id="hudCarry">—</div><div class="k" id="hudSub">샷을 기다리는 중</div></div>
+    <button class="btn" id="replay">↻ 다시 보기</button>
+    <div id="legend">필드 100 × 400 m · 격자 50 m</div>
+  </div>
+  <div id="side">
+    <div class="shape" id="shape"></div>
+    <div class="stats" id="stats"></div>
+    <div class="tabs">
+      <button data-t="cam" class="on">카메라</button><button data-t="video">영상 분석</button><button data-t="manual">수동 샷</button><button data-t="set">설정</button><button data-t="hist">기록</button>
+    </div>
+
+    <div class="pane on" id="p-cam">
+      <div class="row"><select id="camSel" style="flex:1"><option value="">카메라 선택…</option></select><button class="ghost" id="camRefresh">↻</button></div>
+      <div class="row"><select id="camRes"><option value="640x480">640×480</option><option value="1280x720">1280×720</option><option value="320x240">320×240</option></select>
+        <select id="camFps"><option>60</option><option selected>120</option><option>240</option><option>30</option></select><span id="camFpsL" style="color:var(--mute);font-size:12px">fps 요청</span>
+        <button class="primary" id="camStart" style="margin-left:auto">카메라 시작</button></div>
+      <canvas id="preview" width="480" height="360"></canvas>
+      <div class="msg" id="camMsg">카메라를 시작하세요.</div>
+      <div class="row" style="font-size:12px;color:var(--mute)"><span id="camInfo"></span><button class="ghost" id="camReset" style="margin-left:auto;padding:6px 10px">공 다시 찾기</button></div>
+      <div class="note"><b>설치 방법</b> — 카메라를 공 높이에서 <b>타깃 라인과 수직(측면)</b>으로, 공에서 약 1 m 떨어뜨려 고정하세요. 공이 화면 가로로 지나가야 합니다. 배경은 어둡고 무광일수록 좋습니다. 미리보기에서 공을 탭하면 그 공을 기준으로 잡습니다.<br><b>스핀 측정(딤플)</b> — 공 표면의 딤플·로고 무늬가 프레임마다 어떻게 돌았는지로 3축 회전(백·사이드·라이플)을 계산합니다. 조건: <b>공 지름이 화면에서 60px 이상</b>(카메라를 가까이), <b>노출을 짧게</b>(밝은 조명), 그리고 <b>fps가 높을수록</b> 큰 스핀까지 측정됩니다(대략 fps×12 rpm까지, 예: 500fps → 6000rpm). 딤플이 잘 안 보이면 공에 검은 점·선을 몇 개 그리면 훨씬 안정적입니다.</div>
+      <div class="note warnbox" id="camWarn" style="display:none"></div>
+      <div class="note" id="usbHint"><b>OTG USB 카메라가 목록에 없나요?</b> 대부분의 안드로이드 폰은 USB 카메라를 브라우저에 보여주지 않습니다. <b>폰 스크린골프 안드로이드 앱</b>(APK)으로 열면 USB 카메라를 직접 연결해 사용할 수 있습니다.</div>
+    </div>
+
+    <div class="pane" id="p-video">
+      <div class="note">휴대폰의 <b>슬로모션 촬영</b>(240/960 fps) 영상을 분석합니다. 카메라 설치 조건은 실시간 모드와 같습니다. 임팩트 전 공이 정지해 있는 장면부터 시작하는 짧은 클립이 가장 정확합니다.</div>
+      <div class="row"><input type="file" id="vfile" accept="video/*" style="flex:1"></div>
+      <div class="row"><label>실제 촬영 fps</label><input type="number" id="vfps" value="240" min="1" max="5000"><span style="font-size:12px;color:var(--mute)">0 = 파일 시간 그대로</span></div>
+      <div class="row"><label>분석 재생 속도</label><select id="vrate"><option value="0.1">0.1×</option><option value="0.25" selected>0.25×</option><option value="0.5">0.5×</option><option value="1">1×</option></select>
+        <button class="primary" id="vgo" style="margin-left:auto" disabled>분석 시작</button></div>
+      <div class="bar"><i id="vbar"></i></div>
+      <canvas id="vprev" width="480" height="360" style="margin-top:10px"></canvas>
+      <div class="msg" id="vmsg"></div>
+    </div>
+
+    <div class="pane" id="p-manual">
+      <div class="presets">
+        <button data-p="driver">드라이버</button><button data-p="wood3">3번 우드</button><button data-p="iron7">7번 아이언</button><button data-p="pw">피칭웨지</button><button data-p="slice">슬라이스</button><button data-p="hook">훅</button><button data-p="topped">토핑</button>
+      </div>
+      <div id="sliders"></div>
+      <div class="row"><button class="primary" id="fire" style="flex:1">▶ 발사</button></div>
+      <div class="note">스핀 부호: <b>백스핀(X축)</b> +는 공이 뜨는 방향, <b>사이드스핀(Z축)</b> +는 오른쪽으로 휘는 방향(오른손잡이 기준 페이드/슬라이스), <b>라이플(Y축)</b>은 진행 방향 축 회전(궤적 영향 거의 없음).</div>
+    </div>
+
+    <div class="pane" id="p-set">
+      <h3>골퍼</h3>
+      <div class="row"><label>타석</label><select id="sHand"><option value="R">오른손잡이</option><option value="L">왼손잡이</option></select></div>
+      <h3>카메라 · 검출</h3>
+      <div class="row"><label>카메라↔공 거리 (m)</label><input type="number" id="sDist" value="0.5" step="0.01" min="0.2" max="5"><span style="font-size:12px;color:var(--mute)">렌즈~공 중심 직선거리, 줄자로 ±2cm 정확히 (속도·스핀 정확도에 직접 영향)</span></div>
+      <div class="row"><label>공 진행 방향(화면)</label><select id="sDir"><option value="auto">자동</option><option value="right">오른쪽으로</option><option value="left">왼쪽으로</option></select></div>
+      <div class="row"><label>밝기 임계값</label><input type="number" id="sThr" value="0" min="0" max="255"><span style="font-size:12px;color:var(--mute)">0 = 자동</span></div>
+      <div class="row"><label>변화 임계값</label><input type="number" id="sDiff" value="30" min="5" max="120"></div>
+      <div class="row"><label>깊이(좌우) 추정</label><select id="sDepth"><option value="1">공 크기 변화로 추정</option><option value="0">사용 안 함 (방향 0°)</option></select></div>
+      <div class="row"><label>처리 해상도(가로)</label><select id="sProc"><option>320</option><option selected>480</option><option>640</option></select></div>
+      <div class="row"><label>USB 타임스탬프 보정</label><select id="sTsFix"><option value="1">켜기 (권장)</option><option value="0">끄기</option></select></div>
+      <div class="row"><label>속도 보정 계수</label><input type="number" id="sCal" value="1.00" step="0.01" min="0.5" max="1.5"></div>
+      <div class="row"><label>스핀 측정 방식</label><select id="sSpinMode"><option value="auto">자동 (딤플·로고·마커 무늬)</option><option value="texture">표면 무늬만</option><option value="marker">마커 띠만 (구방식)</option></select></div>
+      <div class="row"><label>스핀 미측정 시 백스핀</label><input type="number" id="sDefSpin" value="0" step="100"><span style="font-size:12px;color:var(--mute)">rpm, 0 = 속도·발사각으로 추정</span></div>
+      <h3>환경</h3>
+      <div class="row"><label>지면</label><select id="sSurf"><option value="fairway">페어웨이</option><option value="rough">러프</option><option value="green">그린(단단함)</option></select></div>
+      <div class="row"><label>바람 (m/s)</label><input type="number" id="sWind" value="0" step="0.5" min="0" max="20"><label style="min-width:auto">부는 방향</label><select id="sWindDir"><option value="0">맞바람</option><option value="180">뒷바람</option><option value="90">좌→우</option><option value="270">우→좌</option></select></div>
+      <div class="row"><label>고도 (m)</label><input type="number" id="sAlt" value="0" step="50" min="0" max="3000"><label style="min-width:auto">기온 (°C)</label><input type="number" id="sTemp" value="20" step="1"></div>
+      <div class="row"><label>거리 단위</label><select id="sUnit"><option value="m">미터</option><option value="yd">야드</option></select></div>
+    </div>
+
+    <div class="pane" id="p-hist">
+      <div class="row"><button class="ghost" id="hClear">기록 지우기</button><label style="min-width:auto;margin-left:auto"><input type="checkbox" id="hAll" checked> 이전 궤적 함께 표시</label></div>
+      <table><thead><tr><th>#</th><th>입력</th><th>속도</th><th>발사각</th><th>백/사이드</th><th>캐리</th><th>토탈</th><th>좌우</th><th>구질</th></tr></thead><tbody id="hBody"></tbody></table>
+    </div>
+  </div>
+</div>
+<script>
+/*PHYSICS*/
+</script>
+<script>
+/*SPINTEX*/
+</script>
+<script>
+/*DETECTOR*/
+</script>
+<script>
+/*APP*/
+</script>
+</body>
+</html>
