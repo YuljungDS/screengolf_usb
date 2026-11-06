@@ -82,6 +82,7 @@ class MainActivity : AppCompatActivity() {
     private var selectPending = false
     private var openPending = false
     private var occupiedRetries = 0
+    private var lastClaimDiag = ""
     private var reqW = 640
     private var reqH = 480
     @Volatile private var procW = 480
@@ -306,6 +307,27 @@ class MainActivity : AppCompatActivity() {
         safe { helper?.selectDevice(d) }
     }
 
+    /** 비디오 인터페이스를 강제 점유했다가 놓아, 커널 드라이버를 분리한다. 결과 문자열(진단용)을 돌려준다. */
+    private fun releaseKernelDriver(d: UsbDevice): String {
+        val um = getSystemService(Context.USB_SERVICE) as UsbManager
+        if (!um.hasPermission(d)) return "권한 없음"
+        val conn = try { um.openDevice(d) } catch (e: Exception) { null } ?: return "openDevice 실패"
+        val sb = StringBuilder()
+        try {
+            val seen = HashSet<Int>()
+            for (i in 0 until d.interfaceCount) {
+                val itf = d.getInterface(i)
+                if (itf.interfaceClass != UsbConstants.USB_CLASS_VIDEO || !seen.add(itf.id)) continue
+                val ok = try { conn.claimInterface(itf, true) } catch (e: Exception) { false }
+                sb.append("if").append(itf.id).append(if (ok) ":ok " else ":busy ")
+                if (ok) safe { conn.releaseInterface(itf) }
+            }
+        } finally {
+            safe { conn.close() }
+        }
+        return sb.toString().trim().ifEmpty { "비디오 인터페이스 없음" }
+    }
+
     private fun openCameraOnce() {
         if (openPending) return
         val opened = try { helper?.isCameraOpened == true } catch (e: Exception) { false }
@@ -349,6 +371,14 @@ class MainActivity : AppCompatActivity() {
             }
             "onDeviceOpen" -> {
                 selectPending = false
+                // USB 인터페이스를 커널 드라이버(uvcvideo)가 잡고 있으면 라이브러리가 BUSY(-6)로 실패한다.
+                // 안드로이드 API의 강제 점유(claimInterface force=true)로 커널 드라이버를 먼저 떼어낸다.
+                val diag = (dev ?: device)?.let { releaseKernelDriver(it) } ?: "장치 없음"
+                lastClaimDiag = diag
+                Log.i(TAG, "claim test: $diag")
+                if (diag.contains("busy")) {
+                    sendStatus("USB 인터페이스 점유 실패($diag) — 다른 앱이 카메라를 쓰고 있습니다. 설정 → 애플리케이션 → USB Camera → '강제 중지' 후 카메라를 다시 꽂아 주세요.")
+                }
                 openCameraOnce()
             }
             "onCameraOpen" -> {
@@ -378,14 +408,22 @@ class MainActivity : AppCompatActivity() {
                 openPending = false
                 selectPending = false
                 val err = args?.getOrNull(1)
-                val text = (err as? Throwable)?.message ?: err?.toString() ?: "알 수 없음"
+                val code = try { err?.javaClass?.getMethod("getCode")?.invoke(err) as? Int } catch (e: Exception) { null }
+                val text = ((err as? Throwable)?.message ?: err?.toString() ?: "알 수 없음") +
+                    (if (code != null) " [code $code]" else "") +
+                    (if (lastClaimDiag.isNotEmpty()) " [점유검사 $lastClaimDiag]" else "")
                 Log.e(TAG, "camera error: $text")
                 if (text.contains("occupied", ignoreCase = true) && occupiedRetries < 2 && wantRun) {
                     // 이미 열린 카메라 핸들이 남아 있는 경우: 닫고 잠시 후 다시 연다
                     occupiedRetries++
                     sendStatus("카메라가 사용 중이라 다시 여는 중… (${occupiedRetries}/2)")
                     safe { helper?.closeCamera() }
-                    main.postDelayed({ if (wantRun) openCameraOnce() }, 700L * occupiedRetries)
+                    main.postDelayed({
+                        if (wantRun) {
+                            device?.let { lastClaimDiag = releaseKernelDriver(it) }
+                            openCameraOnce()
+                        }
+                    }, 700L * occupiedRetries)
                 } else {
                     state = "error"
                     val hint = if (text.contains("occupied", ignoreCase = true))
