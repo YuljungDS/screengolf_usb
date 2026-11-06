@@ -1,0 +1,1199 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d1a12">
+<title>폰 스크린골프 — 볼 트래킹 & 궤적 시뮬레이터</title>
+<style>
+:root{
+  --bg:#0b1510; --panel:#122019; --panel2:#18291f; --line:#25392d; --ink:#e8f0ea; --mute:#8ea596;
+  --acc:#d9f26b; --acc2:#5fd39a; --warn:#ffb454; --bad:#ff6b6b; --r:12px;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+body{padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+header{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line)}
+header h1{font-size:15px;margin:0;font-weight:700;letter-spacing:-.01em}
+header h1 b{color:var(--acc)}
+#chip{margin-left:auto;font-size:12px;padding:3px 9px;border-radius:99px;background:var(--panel2);color:var(--mute);white-space:nowrap;max-width:55vw;overflow:hidden;text-overflow:ellipsis}
+#chip.ok{color:#0b1510;background:var(--acc2)} #chip.live{color:#0b1510;background:var(--acc)} #chip.err{color:#fff;background:var(--bad)}
+.wrap{display:flex;flex-direction:column}
+@media (min-width:900px){.wrap{flex-direction:row;height:calc(100vh - 46px)} #stage{flex:1;height:100%!important} #side{width:420px;overflow:auto;border-left:1px solid var(--line)}}
+#stage{position:relative;height:52vh;min-height:300px;background:#89b7d6;touch-action:none}
+#field{width:100%;height:100%;display:block}
+.views{position:absolute;left:8px;top:8px;display:flex;gap:4px;flex-wrap:wrap;max-width:54%;z-index:1}
+.views button,.btn{font:inherit;font-size:12px;border:1px solid rgba(255,255,255,.15);background:rgba(10,20,14,.72);color:var(--ink);padding:6px 10px;border-radius:8px;cursor:pointer;backdrop-filter:blur(6px)}
+.views button.on{background:var(--acc);color:#0b1510;border-color:var(--acc)}
+.hud{position:absolute;right:8px;top:8px;max-width:44%;pointer-events:none;background:rgba(10,20,14,.78);border-radius:10px;padding:8px 10px;font-family:var(--mono);font-size:12px;min-width:120px;backdrop-filter:blur(6px)}
+.hud .big{font-size:22px;color:var(--acc);font-weight:700;line-height:1.1}
+.hud .k{color:var(--mute)}
+#replay{position:absolute;right:8px;bottom:8px}
+#legend{position:absolute;left:8px;bottom:8px;font-size:11px;color:#fff;background:rgba(10,20,14,.6);padding:4px 8px;border-radius:8px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border-bottom:1px solid var(--line)}
+.stat{background:var(--panel);padding:7px 8px}
+.stat .k{font-size:10.5px;color:var(--mute);letter-spacing:.02em}
+.stat .v{font-family:var(--mono);font-size:15px;font-weight:600}
+.stat .v small{font-size:10px;color:var(--mute);font-weight:400;margin-left:2px}
+.tabs{display:flex;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:2;overflow-x:auto}
+.tabs button{flex:1;font:inherit;font-size:13px;background:none;border:0;color:var(--mute);padding:11px 8px;border-bottom:2px solid transparent;white-space:nowrap;cursor:pointer}
+.tabs button.on{color:var(--ink);border-bottom-color:var(--acc)}
+.pane{display:none;padding:14px}
+.pane.on{display:block}
+.row{display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap}
+.row label{color:var(--mute);font-size:12.5px;min-width:110px}
+select,input[type=number],input[type=text]{font:inherit;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:7px 9px;min-width:0}
+input[type=number]{width:90px}
+input[type=range]{flex:1;accent-color:var(--acc);min-width:120px}
+.primary{font:inherit;font-weight:700;background:var(--acc);color:#0b1510;border:0;border-radius:10px;padding:11px 16px;cursor:pointer}
+.primary:disabled{opacity:.4}
+.ghost{font:inherit;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px 14px;cursor:pointer}
+.note{font-size:12px;color:var(--mute);background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 11px;margin:10px 0}
+.note b{color:var(--ink)}
+.warnbox{border-color:#5a4520;background:#21190c;color:#f3d6a2}
+#preview,#vprev{width:100%;border-radius:10px;background:#000;display:block;touch-action:manipulation}
+.msg{font-family:var(--mono);font-size:12px;color:var(--acc);margin-top:6px;min-height:18px}
+.sl{display:grid;grid-template-columns:96px 1fr 70px;gap:8px;align-items:center;margin:6px 0}
+.sl span{font-size:12.5px;color:var(--mute)} .sl output{font-family:var(--mono);text-align:right}
+.presets{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.presets button{font:inherit;font-size:12px;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:99px;padding:6px 11px;cursor:pointer}
+table{width:100%;border-collapse:collapse;font-size:12px;font-family:var(--mono)}
+th,td{padding:6px 4px;border-bottom:1px solid var(--line);text-align:right}
+th{color:var(--mute);font-weight:500;font-family:system-ui,sans-serif}
+td:first-child,th:first-child{text-align:left}
+tr.sel td{color:var(--acc)} tbody tr{cursor:pointer}
+h3{font-size:13px;margin:14px 0 6px;color:var(--acc2)}
+.bar{height:6px;background:var(--panel2);border-radius:3px;overflow:hidden}.bar i{display:block;height:100%;background:var(--acc);width:0}
+</style>
+</head>
+<body>
+<header><h1>⛳ 폰 스크린골프 <b>Tracker</b> <span id="appBadge" style="display:none;font-size:10px;font-weight:600;color:#0b1510;background:var(--acc2);padding:2px 6px;border-radius:6px;vertical-align:middle">APP</span></h1><span id="chip">대기</span></header>
+<div class="wrap">
+  <div id="stage">
+    <canvas id="field"></canvas>
+    <div class="views">
+      <button data-v="behind" class="on">후방</button><button data-v="follow">추적</button><button data-v="top">상공</button><button data-v="side">측면</button>
+    </div>
+    <div class="hud" id="hud"><div class="k" id="hudK">캐리</div><div class="big" id="hudCarry">—</div><div class="k" id="hudSub">샷을 기다리는 중</div></div>
+    <button class="btn" id="replay">↻ 다시 보기</button>
+    <div id="legend">필드 100 × 400 m · 격자 50 m</div>
+  </div>
+  <div id="side">
+    <div class="stats" id="stats"></div>
+    <div class="tabs">
+      <button data-t="cam" class="on">카메라</button><button data-t="video">영상 분석</button><button data-t="manual">수동 샷</button><button data-t="set">설정</button><button data-t="hist">기록</button>
+    </div>
+
+    <div class="pane on" id="p-cam">
+      <div class="row"><select id="camSel" style="flex:1"><option value="">카메라 선택…</option></select><button class="ghost" id="camRefresh">↻</button></div>
+      <div class="row"><select id="camRes"><option value="640x480">640×480</option><option value="1280x720">1280×720</option><option value="320x240">320×240</option></select>
+        <select id="camFps"><option>60</option><option selected>120</option><option>240</option><option>30</option></select><span id="camFpsL" style="color:var(--mute);font-size:12px">fps 요청</span>
+        <button class="primary" id="camStart" style="margin-left:auto">카메라 시작</button></div>
+      <canvas id="preview" width="480" height="360"></canvas>
+      <div class="msg" id="camMsg">카메라를 시작하세요.</div>
+      <div class="row" style="font-size:12px;color:var(--mute)"><span id="camInfo"></span><button class="ghost" id="camReset" style="margin-left:auto;padding:6px 10px">공 다시 찾기</button></div>
+      <div class="note"><b>설치 방법</b> — 카메라를 공 높이에서 <b>타깃 라인과 수직(측면)</b>으로, 공에서 약 1 m 떨어뜨려 고정하세요. 공이 화면 가로로 지나가야 합니다. 배경은 어둡고 무광일수록 좋습니다. 미리보기에서 공을 탭하면 그 공을 기준으로 잡습니다.<br><b>스핀 측정</b> — 공 둘레에 굵은 검은 선(띠)을 하나 그리세요. 선의 자세 변화로 3축 회전을 계산합니다.</div>
+      <div class="note warnbox" id="camWarn" style="display:none"></div>
+      <div class="note" id="usbHint"><b>OTG USB 카메라가 목록에 없나요?</b> 대부분의 안드로이드 폰은 USB 카메라를 브라우저에 보여주지 않습니다. <b>폰 스크린골프 안드로이드 앱</b>(APK)으로 열면 USB 카메라를 직접 연결해 사용할 수 있습니다.</div>
+    </div>
+
+    <div class="pane" id="p-video">
+      <div class="note">휴대폰의 <b>슬로모션 촬영</b>(240/960 fps) 영상을 분석합니다. 카메라 설치 조건은 실시간 모드와 같습니다. 임팩트 전 공이 정지해 있는 장면부터 시작하는 짧은 클립이 가장 정확합니다.</div>
+      <div class="row"><input type="file" id="vfile" accept="video/*" style="flex:1"></div>
+      <div class="row"><label>실제 촬영 fps</label><input type="number" id="vfps" value="240" min="1" max="5000"><span style="font-size:12px;color:var(--mute)">0 = 파일 시간 그대로</span></div>
+      <div class="row"><label>분석 재생 속도</label><select id="vrate"><option value="0.1">0.1×</option><option value="0.25" selected>0.25×</option><option value="0.5">0.5×</option><option value="1">1×</option></select>
+        <button class="primary" id="vgo" style="margin-left:auto" disabled>분석 시작</button></div>
+      <div class="bar"><i id="vbar"></i></div>
+      <canvas id="vprev" width="480" height="360" style="margin-top:10px"></canvas>
+      <div class="msg" id="vmsg"></div>
+    </div>
+
+    <div class="pane" id="p-manual">
+      <div class="presets">
+        <button data-p="driver">드라이버</button><button data-p="wood3">3번 우드</button><button data-p="iron7">7번 아이언</button><button data-p="pw">피칭웨지</button><button data-p="slice">슬라이스</button><button data-p="hook">훅</button><button data-p="topped">토핑</button>
+      </div>
+      <div id="sliders"></div>
+      <div class="row"><button class="primary" id="fire" style="flex:1">▶ 발사</button></div>
+      <div class="note">스핀 부호: <b>백스핀(X축)</b> +는 공이 뜨는 방향, <b>사이드스핀(Z축)</b> +는 오른쪽으로 휘는 방향(오른손잡이 기준 페이드/슬라이스), <b>라이플(Y축)</b>은 진행 방향 축 회전(궤적 영향 거의 없음).</div>
+    </div>
+
+    <div class="pane" id="p-set">
+      <h3>카메라 · 검출</h3>
+      <div class="row"><label>카메라↔공 거리 (m)</label><input type="number" id="sDist" value="1.0" step="0.05" min="0.2" max="5"></div>
+      <div class="row"><label>공 진행 방향(화면)</label><select id="sDir"><option value="auto">자동</option><option value="right">오른쪽으로</option><option value="left">왼쪽으로</option></select></div>
+      <div class="row"><label>밝기 임계값</label><input type="number" id="sThr" value="0" min="0" max="255"><span style="font-size:12px;color:var(--mute)">0 = 자동</span></div>
+      <div class="row"><label>변화 임계값</label><input type="number" id="sDiff" value="30" min="5" max="120"></div>
+      <div class="row"><label>깊이(좌우) 추정</label><select id="sDepth"><option value="1">공 크기 변화로 추정</option><option value="0">사용 안 함 (방향 0°)</option></select></div>
+      <div class="row"><label>처리 해상도(가로)</label><select id="sProc"><option>320</option><option selected>480</option><option>640</option></select></div>
+      <div class="row"><label>USB 타임스탬프 보정</label><select id="sTsFix"><option value="1">켜기 (권장)</option><option value="0">끄기</option></select></div>
+      <div class="row"><label>속도 보정 계수</label><input type="number" id="sCal" value="1.00" step="0.01" min="0.5" max="1.5"></div>
+      <div class="row"><label>스핀 미측정 시 백스핀</label><input type="number" id="sDefSpin" value="0" step="100"><span style="font-size:12px;color:var(--mute)">rpm, 0 = 속도·발사각으로 추정</span></div>
+      <h3>환경</h3>
+      <div class="row"><label>지면</label><select id="sSurf"><option value="fairway">페어웨이</option><option value="rough">러프</option><option value="green">그린(단단함)</option></select></div>
+      <div class="row"><label>바람 (m/s)</label><input type="number" id="sWind" value="0" step="0.5" min="0" max="20"><label style="min-width:auto">부는 방향</label><select id="sWindDir"><option value="0">맞바람</option><option value="180">뒷바람</option><option value="90">좌→우</option><option value="270">우→좌</option></select></div>
+      <div class="row"><label>고도 (m)</label><input type="number" id="sAlt" value="0" step="50" min="0" max="3000"><label style="min-width:auto">기온 (°C)</label><input type="number" id="sTemp" value="20" step="1"></div>
+      <div class="row"><label>거리 단위</label><select id="sUnit"><option value="m">미터</option><option value="yd">야드</option></select></div>
+    </div>
+
+    <div class="pane" id="p-hist">
+      <div class="row"><button class="ghost" id="hClear">기록 지우기</button><label style="min-width:auto;margin-left:auto"><input type="checkbox" id="hAll" checked> 이전 궤적 함께 표시</label></div>
+      <table><thead><tr><th>#</th><th>입력</th><th>속도</th><th>발사각</th><th>백/사이드</th><th>캐리</th><th>토탈</th><th>좌우</th></tr></thead><tbody id="hBody"></tbody></table>
+    </div>
+  </div>
+</div>
+<script>
+// ===== 골프공 비행 물리 엔진 =====
+// 좌표계 (오른손 좌표계, ENU): x = 오른쪽(타깃 라인 기준), y = 전방(비거리), z = 위
+// 스핀 벡터 ω (rad/s): ωx>0 = 백스핀, ωz>0 = 왼쪽으로 휨(훅/드로우), ωy = 라이플 스핀(진행축 회전)
+const Golf = (() => {
+  const BALL = { m: 0.04593, r: 0.021335 };
+  BALL.A = Math.PI * BALL.r * BALL.r;
+  BALL.I = 0.4 * BALL.m * BALL.r * BALL.r;
+  const G = 9.81, MU_AIR = 1.81e-5;
+  const RPM = 2 * Math.PI / 60;
+
+  const v3 = {
+    add: (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]],
+    sub: (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]],
+    mul: (a, s) => [a[0] * s, a[1] * s, a[2] * s],
+    dot: (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2],
+    cross: (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]],
+    len: a => Math.hypot(a[0], a[1], a[2]),
+  };
+
+  // 공력 계수: 스핀비 S = rω/v 기반 (Bearman & Harvey, Smits & Smith 실험식 근사)
+  function coeffs(v, w, rho) {
+    const S = BALL.r * w / Math.max(v, 0.1);
+    const Re = rho * v * 2 * BALL.r / MU_AIR;
+    // 저속(항력 위기 이전) 영역에서는 Cd 증가
+    let cd0 = 0.225;
+    if (Re < 7e4) cd0 = 0.225 + (7e4 - Re) / 7e4 * 0.25;
+    const Cd = cd0 + 0.21 * S;
+    const Cl = Math.min(0.40, 0.54 * Math.pow(S, 0.4)); // 멱함수형 양력곡선(포화 0.40)
+    return { Cd, Cl, S, Re };
+  }
+
+  function accel(vel, w, env) {
+    const rel = v3.sub(vel, env.wind);
+    const v = v3.len(rel);
+    const wm = v3.len(w);
+    const { Cd, Cl } = coeffs(v, wm, env.rho);
+    const k = 0.5 * env.rho * BALL.A / BALL.m;
+    let a = [0, 0, -G];
+    if (v > 1e-6) {
+      a = v3.add(a, v3.mul(rel, -k * Cd * v));
+      if (wm > 1e-6) {
+        // 마그누스 힘: ω̂ × v̂ 방향 (라이플 성분은 v와 평행이므로 자연히 0)
+        const m = v3.cross(w, rel);
+        const ml = v3.len(m);
+        if (ml > 1e-9) a = v3.add(a, v3.mul(m, k * Cl * v * v / ml));
+      }
+    }
+    return a;
+  }
+
+  const SURFACES = {
+    fairway: { e0: 0.38, eK: 0.016, mu: 0.6, roll: 0.3 },
+    rough: { e0: 0.28, eK: 0.014, mu: 0.7, roll: 0.5 },
+    green: { e0: 0.32, eK: 0.016, mu: 0.6, roll: 0.09 },
+  };
+
+  // 초기 조건 → 궤적
+  // launch: { speed(m/s), vla(발사각°), hla(방향각°, +오른쪽), spin: [ωx, ωy, ωz] (rpm) }
+  function simulate(launch, opts = {}) {
+    const env = {
+      rho: opts.rho ?? 1.225,
+      wind: opts.wind ?? [0, 0, 0],
+      surface: SURFACES[opts.surface || 'fairway'],
+      spinTau: opts.spinTau ?? 25,
+    };
+    const vla = launch.vla * Math.PI / 180, hla = launch.hla * Math.PI / 180;
+    let p = [0, 0, BALL.r];
+    let v = [launch.speed * Math.cos(vla) * Math.sin(hla), launch.speed * Math.cos(vla) * Math.cos(hla), launch.speed * Math.sin(vla)];
+    let w = launch.spin.map(s => s * RPM);
+    const dt = 0.002;
+    let t = 0, phase = 'flight';
+    const pts = [{ t, p: p.slice(), phase }];
+    let apex = p[2], landing = null, bounces = 0, lastRec = 0;
+    const rec = force => { if (force || t - lastRec >= 0.016) { pts.push({ t, p: p.slice(), phase }); lastRec = t; } };
+
+    while (t < 30) {
+      if (phase === 'flight' || phase === 'bounce') {
+        // 중점법(RK2)
+        const a1 = accel(v, w, env);
+        const vm = v3.add(v, v3.mul(a1, dt / 2));
+        const a2 = accel(vm, w, env);
+        p = v3.add(p, v3.mul(vm, dt));
+        v = v3.add(v, v3.mul(a2, dt));
+        w = v3.mul(w, Math.exp(-dt / env.spinTau));
+        t += dt;
+        apex = Math.max(apex, p[2]);
+        if (p[2] <= BALL.r && v[2] < 0) {
+          p[2] = BALL.r;
+          if (!landing) landing = { t, p: p.slice(), v: v.slice(), angle: Math.atan2(-v[2], Math.hypot(v[0], v[1])) * 180 / Math.PI };
+          bounce();
+          bounces++;
+          rec(true);
+          if (Math.abs(v[2]) < 0.6 || bounces > 8) { v[2] = 0; phase = 'roll'; }
+          else phase = 'bounce';
+        }
+        rec(false);
+      } else {
+        const vh = Math.hypot(v[0], v[1]);
+        const dec = env.surface.roll * G * dt;
+        if (vh <= dec) { v = [0, 0, 0]; t += dt; rec(true); break; }
+        v = [v[0] * (1 - dec / vh), v[1] * (1 - dec / vh), 0];
+        p = v3.add(p, v3.mul(v, dt));
+        t += dt;
+        rec(false);
+      }
+    }
+
+    // 지면 충돌: 수직 반발 + 접촉점 마찰(미끄럼/구름 전환, 백스핀 반영)
+    function bounce() {
+      const s = env.surface;
+      const vn = -v[2];
+      const e = Math.max(0.12, s.e0 - s.eK * vn);
+      const Jn = BALL.m * (1 + e) * vn;
+      const r = BALL.r;
+      // 접촉점 속도 = v + ω × (0,0,-r)
+      const u = [v[0] - r * w[1], v[1] + r * w[0]];
+      const ul = Math.hypot(u[0], u[1]);
+      v[2] = e * vn;
+      if (ul < 1e-6) return;
+      const keff = 1 / BALL.m + r * r / BALL.I;
+      const Jt = Math.min(s.mu * Jn, ul / keff);
+      const J = [-u[0] / ul * Jt, -u[1] / ul * Jt];
+      v[0] += J[0] / BALL.m; v[1] += J[1] / BALL.m;
+      w[0] += r * J[1] / BALL.I;
+      w[1] += -r * J[0] / BALL.I;
+      w[2] *= 0.7;
+    }
+
+    const fin = p;
+    const lp = landing ? landing.p : fin;
+    return {
+      pts,
+      apex,
+      carry: Math.hypot(lp[0], lp[1]),
+      carryY: lp[1], carryX: lp[0],
+      total: Math.hypot(fin[0], fin[1]),
+      totalY: fin[1], totalX: fin[0],
+      flightTime: landing ? landing.t : t,
+      landAngle: landing ? landing.angle : 0,
+      landing: lp, final: fin,
+    };
+  }
+
+  // 스핀 벡터 → 백스핀/사이드스핀/스핀축 표기
+  function describeSpin(spin) {
+    const [bx, ry, sz] = spin;
+    const total = Math.hypot(bx, ry, sz);
+    const axisTilt = Math.atan2(-sz, bx) * 180 / Math.PI; // +면 오른쪽으로 휨(페이드/슬라이스)
+    return { back: bx, side: -sz, rifle: ry, total, axisTilt };
+  }
+
+  return { simulate, describeSpin, coeffs, BALL, RPM, SURFACES };
+})();
+
+</script>
+<script>
+// ===== 카메라 영상에서 골프공 검출·추적 → 발사 조건(속도·방향·3축 스핀) 산출 =====
+// 가정: 카메라는 공 높이에서 타깃 라인과 수직(측면)으로 공을 바라봄.
+//   화면 가로 = 진행 방향, 화면 세로 = 높이, 공의 겉보기 크기 변화 = 좌우(카메라 쪽/반대쪽) 이동
+// 스핀: 공에 그린 '띠 모양 선(마커)'의 3D 자세 변화를 프레임 간 비교(TRIAD)해 회전 벡터를 구함
+const Detector = (() => {
+  const M3 = {
+    norm: a => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; },
+    dot: (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2],
+    cross: (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]],
+    // 열벡터 [a1 a2 a3] 행렬
+    cols: (a, b, c) => [[a[0], b[0], c[0]], [a[1], b[1], c[1]], [a[2], b[2], c[2]]],
+    mulT: (B, A) => { // B * A^T
+      const R = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+      for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) for (let k = 0; k < 3; k++) R[i][j] += B[i][k] * A[j][k];
+      return R;
+    },
+    apply: (M, v) => [M[0][0] * v[0] + M[0][1] * v[1] + M[0][2] * v[2], M[1][0] * v[0] + M[1][1] * v[1] + M[1][2] * v[2], M[2][0] * v[0] + M[2][1] * v[1] + M[2][2] * v[2]],
+  };
+
+  function axisAngle(R) {
+    const tr = R[0][0] + R[1][1] + R[2][2];
+    const th = Math.acos(Math.max(-1, Math.min(1, (tr - 1) / 2)));
+    if (th < 1e-6) return { th: 0, axis: [1, 0, 0] };
+    const s = 2 * Math.sin(th);
+    return { th, axis: M3.norm([(R[2][1] - R[1][2]) / s, (R[0][2] - R[2][0]) / s, (R[1][0] - R[0][1]) / s]) };
+  }
+
+  // 연결요소(블롭) 추출 + 2차 모멘트
+  function blobs(mask, w, h, minArea) {
+    const lab = new Int32Array(w * h);
+    const out = [];
+    const stack = new Int32Array(w * h);
+    let id = 0;
+    for (let i = 0; i < w * h; i++) {
+      if (!mask[i] || lab[i]) continue;
+      id++;
+      let sp = 0; stack[sp++] = i; lab[i] = id;
+      let n = 0, sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0, minx = w, maxx = 0, miny = h, maxy = 0;
+      while (sp) {
+        const k = stack[--sp];
+        const x = k % w, y = (k / w) | 0;
+        n++; sx += x; sy += y; sxx += x * x; syy += y * y; sxy += x * y;
+        if (x < minx) minx = x; if (x > maxx) maxx = x; if (y < miny) miny = y; if (y > maxy) maxy = y;
+        if (x > 0 && mask[k - 1] && !lab[k - 1]) { lab[k - 1] = id; stack[sp++] = k - 1; }
+        if (x < w - 1 && mask[k + 1] && !lab[k + 1]) { lab[k + 1] = id; stack[sp++] = k + 1; }
+        if (y > 0 && mask[k - w] && !lab[k - w]) { lab[k - w] = id; stack[sp++] = k - w; }
+        if (y < h - 1 && mask[k + w] && !lab[k + w]) { lab[k + w] = id; stack[sp++] = k + w; }
+      }
+      if (n < minArea) continue;
+      const cx = sx / n, cy = sy / n;
+      const vxx = sxx / n - cx * cx, vyy = syy / n - cy * cy, vxy = sxy / n - cx * cy;
+      const tmp = Math.sqrt(((vxx - vyy) / 2) ** 2 + vxy * vxy);
+      const l1 = (vxx + vyy) / 2 + tmp, l2 = Math.max(1e-6, (vxx + vyy) / 2 - tmp);
+      out.push({ n, cx, cy, l1, l2, r: 2 * Math.sqrt(l2), rMaj: 2 * Math.sqrt(l1), minx, maxx, miny, maxy, angle: 0.5 * Math.atan2(2 * vxy, vxx - vyy) });
+    }
+    return out;
+  }
+
+  // 원판(공) 안쪽을 채워 흰색 공 내부의 어두운 마커 구멍까지 덮는다
+  function discFill(b) { return b.n / (Math.PI * b.r * b.rMaj); }
+
+  class ShotDetector {
+    constructor(opts = {}) {
+      this.o = Object.assign({
+        ballD: 0.04267, camDist: 1.0, dir: 'auto', thr: 0, diffThr: 30,
+        stableFrames: 8, maxTrackTime: 0.3, useDepth: true, maxHla: 25,
+      }, opts);
+      this.reset();
+    }
+    set(opts) { Object.assign(this.o, opts); }
+    reset() { this.state = 'search'; this.stable = 0; this.rest = null; this.cand = null; this.track = []; this.seed = this.seed || null; this.lastShot = null; this.msg = '공을 찾는 중…'; }
+    setSeed(u, v) { this.seed = { u, v }; this.reset(); }
+
+    threshold(gray) {
+      if (this.o.thr > 0) return this.o.thr;
+      const hist = new Uint32Array(256);
+      for (let i = 0; i < gray.length; i++) hist[gray[i]]++;
+      let acc = 0; const target = gray.length * 0.995; let p = 255;
+      for (let i = 0; i < 256; i++) { acc += hist[i]; if (acc >= target) { p = i; break; } }
+      return Math.max(130, Math.min(235, p - 20));
+    }
+
+    // 공 내부 마커 → 구면 위 점들 → (중심방향 c, 선 방향 d)
+    marker(f, b) {
+      const { gray, w, h } = f;
+      const R = b.r, pts = [];
+      let sum = 0, cnt = 0;
+      const x0 = Math.max(0, Math.floor(b.cx - R)), x1 = Math.min(w - 1, Math.ceil(b.cx + R));
+      const y0 = Math.max(0, Math.floor(b.cy - R)), y1 = Math.min(h - 1, Math.ceil(b.cy + R));
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+        const dx = (x - b.cx) / R, dy = (y - b.cy) / R;
+        if (dx * dx + dy * dy < 0.7) { sum += gray[y * w + x]; cnt++; }
+      }
+      if (cnt < 20) return null;
+      const mean = sum / cnt;
+      // 밝은 부분 평균을 기준으로 어두운 픽셀을 마커로
+      let bs = 0, bc = 0;
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+        const dx = (x - b.cx) / R, dy = (y - b.cy) / R;
+        if (dx * dx + dy * dy < 0.7) { const g = gray[y * w + x]; if (g >= mean) { bs += g; bc++; } }
+      }
+      const bright = bs / Math.max(1, bc);
+      const cut = bright * 0.6;
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+        const dx = (x - b.cx) / R, dy = (y - b.cy) / R;
+        const q = dx * dx + dy * dy;
+        if (q < 0.72 && gray[y * w + x] < cut) pts.push([dx, dy, -Math.sqrt(1 - q)]); // 카메라 쪽 반구 (z<0)
+      }
+      if (pts.length < 6) return null;
+      let c = [0, 0, 0];
+      for (const p of pts) { c[0] += p[0]; c[1] += p[1]; c[2] += p[2]; }
+      c = M3.norm(c);
+      // 주성분(멱반복)
+      const C = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+      for (const p of pts) { const q = [p[0] - c[0], p[1] - c[1], p[2] - c[2]]; for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) C[i][j] += q[i] * q[j]; }
+      let d = [1, 0.3, 0.1];
+      for (let it = 0; it < 30; it++) d = M3.norm(M3.apply(C, d));
+      const dc = M3.dot(d, c);
+      d = M3.norm([d[0] - dc * c[0], d[1] - dc * c[1], d[2] - dc * c[2]]);
+      return { c, d, n: pts.length };
+    }
+
+    detectMoving(f, thr) {
+      const { gray, w, h } = f, ref = this.ref;
+      const mask = new Uint8Array(w * h);
+      for (let i = 0; i < w * h; i++) mask[i] = (gray[i] > thr * 0.85 && Math.abs(gray[i] - ref[i]) > this.o.diffThr) ? 1 : 0;
+      this.closeMask(mask, w, h, Math.max(1, Math.round(this.rest.r * 0.3)));
+      const r0 = this.rest.r, a0 = Math.PI * r0 * r0;
+      const bs = blobs(mask, w, h, Math.max(4, a0 * 0.12)).filter(b => b.n < a0 * 8 && b.r > r0 * 0.35 && b.r < r0 * 2.2 &&
+        Math.hypot(b.cx - this.rest.cx, b.cy - this.rest.cy) > r0 * 1.2 &&
+        b.minx > 1 && b.miny > 1 && b.maxx < w - 2 && b.maxy < h - 2); // 화면 경계에 걸친 공은 크기 왜곡
+      if (!bs.length) return null;
+      let best = null, bd = Infinity;
+      const last = this.track[this.track.length - 1];
+      for (const b of bs) {
+        let d;
+        if (!last) d = Math.hypot(b.cx - this.rest.cx, b.cy - this.rest.cy);
+        else {
+          const prev = this.track[this.track.length - 2];
+          const dt = f.t - last.t;
+          let pu = last.u, pv = last.v;
+          if (prev) { const k = dt / (last.t - prev.t); pu += (last.u - prev.u) * k; pv += (last.v - prev.v) * k; }
+          d = Math.hypot(b.cx - pu, b.cy - pv);
+          // 진행 방향 역행 후보 제외
+          if (this.dirSign && (b.cx - last.u) * this.dirSign < -r0) d = Infinity;
+        }
+        if (d < bd) { bd = d; best = b; }
+      }
+      return best && isFinite(bd) ? best : null;
+    }
+
+    // 흰 공 내부 마커(어두운 선) 때문에 생기는 구멍을 메움: 3x3 팽창 후 침식
+    closeMask(mask, w, h, iter = 1) {
+      const tmp = new Uint8Array(w * h);
+      const pass = (src, dst, dil) => {
+        for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+          const i = y * w + x;
+          dst[i] = dil ? (src[i] | src[i - 1] | src[i + 1] | src[i - w] | src[i + w])
+                       : (src[i] & src[i - 1] & src[i + 1] & src[i - w] & src[i + w]);
+        }
+      };
+      let a = mask, b = tmp;
+      for (let k = 0; k < iter; k++) { pass(a, b, true); [a, b] = [b, a]; }
+      for (let k = 0; k < iter; k++) { pass(a, b, false); [a, b] = [b, a]; }
+      if (a !== mask) mask.set(a);
+    }
+
+    // 프레임 처리. f = { gray:Uint8Array, w, h, t(초) }
+    process(f) {
+      const { gray, w, h, t } = f;
+      // 임계값은 공 탐색 단계에서만 다시 계산(준비·추적 단계는 고정)
+      const thr = (this.state === 'search' || !this.lastThr) ? this.threshold(gray) : this.lastThr;
+      this.lastThr = thr;
+      let shot = null;
+
+      if (this.state === 'search') {
+        const mask = new Uint8Array(w * h);
+        for (let i = 0; i < w * h; i++) mask[i] = gray[i] > thr ? 1 : 0;
+        this.closeMask(mask, w, h, this.cand ? Math.max(1, Math.round(this.cand.r * 0.3)) : 2);
+        const bs = blobs(mask, w, h, 10).filter(b => b.l2 / b.l1 > 0.55 && discFill(b) > 0.6 && discFill(b) < 1.35);
+        let best = null;
+        if (this.seed) { let bd = Infinity; for (const b of bs) { const d = Math.hypot(b.cx - this.seed.u, b.cy - this.seed.v); if (d < bd && d < Math.max(30, b.r * 4)) { bd = d; best = b; } } }
+        else for (const b of bs) if (!best || b.n > best.n) best = b;
+        if (best && this.cand && Math.hypot(best.cx - this.cand.cx, best.cy - this.cand.cy) < Math.max(1.5, best.r * 0.2) && Math.abs(best.r - this.cand.r) < Math.max(1, best.r * 0.15)) this.stable++;
+        else this.stable = 0;
+        this.cand = best;
+        this.msg = best ? `공 감지됨 — 고정 확인 중 (${this.stable}/${this.o.stableFrames})` : '공을 찾는 중… (화면에서 공을 탭하면 지정됩니다)';
+        if (best && this.stable >= this.o.stableFrames) {
+          this.rest = { cx: best.cx, cy: best.cy, r: best.r, t };
+          this.ref = new Uint8Array(gray);
+          this.restFrac = this.discFrac(f, thr);
+          this.state = 'ready';
+          this.msg = '준비 완료 — 스윙하세요';
+        }
+      } else if (this.state === 'ready') {
+        const frac = this.discFrac(f, thr);
+        if (frac < this.restFrac * 0.4) {
+          this.state = 'track'; this.tImpact = t; this.track = []; this.miss = 0; this.dirSign = this.o.dir === 'right' ? 1 : this.o.dir === 'left' ? -1 : 0;
+          this.msg = '임팩트 감지 — 추적 중';
+          this.trackFrame(f, thr);
+        }
+      } else if (this.state === 'track') {
+        this.trackFrame(f, thr);
+        const done = (this.track.length && this.miss >= 3) || t - this.tImpact > this.o.maxTrackTime;
+        if (done) {
+          if (this.track.length >= 2) { shot = this.computeShot(w, h); this.lastShot = shot; this.state = 'cool'; this.tCool = t; this.msg = shot.ok ? '샷 계산 완료' : '샷 계산 실패: ' + shot.reason; }
+          else { this.msg = '공 궤적을 충분히 잡지 못했습니다 (프레임 수 부족) — 다시 찾는 중'; this.lastFail = { t, n: this.track.length }; this.state = 'search'; this.stable = 0; }
+        }
+      } else if (this.state === 'cool') {
+        if (t - this.tCool > 1.5) { this.reset(); this.msg = '다음 공을 올려놓으세요'; }
+      }
+      return { state: this.state, msg: this.msg, rest: this.rest, cand: this.cand, track: this.track, shot, thr };
+    }
+
+    discFrac(f, thr) {
+      const { gray, w } = f, r = this.rest;
+      let on = 0, n = 0;
+      for (let y = Math.floor(r.cy - r.r); y <= r.cy + r.r; y++) for (let x = Math.floor(r.cx - r.r); x <= r.cx + r.r; x++) {
+        if ((x - r.cx) ** 2 + (y - r.cy) ** 2 > r.r * r.r * 0.6) continue;
+        n++; if (gray[y * w + x] > thr * 0.85) on++;
+      }
+      return on / Math.max(1, n);
+    }
+
+    trackFrame(f, thr) {
+      const b = this.detectMoving(f, thr);
+      if (!b) { if (this.track.length) this.miss++; return; }
+      this.miss = 0;
+      if (!this.dirSign) this.dirSign = Math.sign(b.cx - this.rest.cx) || 1;
+      const blur = b.l1 / b.l2;
+      const mk = blur < 1.6 ? this.marker(f, b) : null;
+      this.track.push({ t: f.t, u: b.cx, v: b.cy, r: b.r, blur, mk });
+    }
+
+    computeShot(w, h) {
+      const o = this.o, r0 = this.rest.r;
+      const fpx = 2 * r0 * o.camDist / o.ballD; // 초점거리(px)
+      const pu = w / 2, pv = h / 2;
+      // 크기 이상치(가림·경계·잔상) 제거
+      const rs = this.track.map(s => s.r).sort((a, b) => a - b);
+      const rMed = rs[rs.length >> 1];
+      const tr = this.track.filter(s => Math.abs(s.r - rMed) / rMed < 0.2);
+      if (tr.length < 2) return { ok: false, reason: '유효 프레임 부족', frames: tr.length, spinPairs: 0 };
+      // 공 크기(반지름)는 잡음이 크므로 평균 후 선형적합
+      const P = tr.map(s => {
+        const Z = o.useDepth ? fpx * o.ballD / (2 * s.r) : o.camDist;
+        return { t: s.t, X: (s.u - pu) * Z / fpx, Y: (s.v - pv) * Z / fpx, Z };
+      });
+      const fit = key => {
+        const n = P.length; let st = 0, sv = 0, stt = 0, stv = 0;
+        for (const p of P) { st += p.t; sv += p[key]; stt += p.t * p.t; stv += p.t * p[key]; }
+        const den = n * stt - st * st;
+        return den === 0 ? 0 : (n * stv - st * sv) / den;
+      };
+      const vc = [fit('X'), fit('Y'), fit('Z')];
+      const s = this.dirSign;
+      // 카메라 좌표 → 월드(ENU: x 오른쪽, y 전방, z 위)
+      const M = s > 0 ? [[0, 0, -1], [1, 0, 0], [0, -1, 0]] : [[0, 0, 1], [-1, 0, 0], [0, -1, 0]];
+      const vw = M3.apply(M, vc);
+      const speed = Math.hypot(vw[0], vw[1], vw[2]);
+      const vla = Math.atan2(vw[2], Math.hypot(vw[0], vw[1])) * 180 / Math.PI;
+      let hla = Math.atan2(vw[0], vw[1]) * 180 / Math.PI;
+      hla = Math.max(-o.maxHla, Math.min(o.maxHla, hla));
+
+      // 스핀: 연속 프레임 마커 자세 비교
+      const ws = [];
+      for (let i = 1; i < tr.length; i++) {
+        const a = tr[i - 1].mk, b = tr[i].mk;
+        if (!a || !b) continue;
+        const dt = tr[i].t - tr[i - 1].t;
+        const A = M3.cols(a.c, a.d, M3.cross(a.c, a.d));
+        let best = null;
+        for (const sg of [1, -1]) {
+          const d2 = [b.d[0] * sg, b.d[1] * sg, b.d[2] * sg];
+          const B = M3.cols(b.c, d2, M3.cross(b.c, d2));
+          const aa = axisAngle(M3.mulT(B, A));
+          if (!best || aa.th < best.th) best = aa;
+        }
+        // 카메라 좌표계의 v축이 아래 방향이므로 회전 그대로 사용(오른손 좌표계)
+        ws.push(best.axis.map(x => x * best.th / dt));
+      }
+      let spin = null, spinFrom = 'none';
+      if (ws.length) {
+        const med = k => { const a = ws.map(x => x[k]).sort((p, q) => p - q); return a[a.length >> 1]; };
+        const wc = [med(0), med(1), med(2)];
+        const wwld = M3.apply(M, wc);
+        spin = wwld.map(x => x * 60 / (2 * Math.PI));
+        spinFrom = 'marker';
+      }
+      const dtTot = tr[tr.length - 1].t - tr[0].t;
+      const ok = speed > 3 && speed < 95 && vla > -10 && vla < 70;
+      return { ok, reason: ok ? '' : `비정상 값 (속도 ${speed.toFixed(1)} m/s, 발사각 ${vla.toFixed(1)}°)`, speed, vla, hla, spin, spinFrom, frames: tr.length, spinPairs: ws.length, dtTot, fpx };
+    }
+  }
+  return { ShotDetector, blobs };
+})();
+
+</script>
+<script>
+// ===== 앱: 필드 렌더링 · 카메라/영상 입력 · 수동 샷 · 기록 =====
+(() => {
+  const $ = id => document.getElementById(id);
+  const FIELD = { w: 100, l: 400 };
+  const YD = 0.9144;
+
+  // ---------- 설정 ----------
+  const SKEYS = ['sDist', 'sDir', 'sThr', 'sDiff', 'sDepth', 'sProc', 'sTsFix', 'sCal', 'sDefSpin', 'sSurf', 'sWind', 'sWindDir', 'sAlt', 'sTemp', 'sUnit'];
+  try { const saved = JSON.parse(localStorage.getItem('psg-settings') || '{}'); for (const k of SKEYS) if (saved[k] != null) $(k).value = saved[k]; } catch (e) { }
+  const S = () => ({
+    dist: +$('sDist').value || 1, dir: $('sDir').value, thr: +$('sThr').value || 0, diff: +$('sDiff').value || 30,
+    depth: $('sDepth').value === '1', proc: +$('sProc').value, cal: +$('sCal').value || 1, defSpin: +$('sDefSpin').value || 0,
+    surf: $('sSurf').value, wind: +$('sWind').value || 0, windDir: +$('sWindDir').value, alt: +$('sAlt').value || 0, temp: +$('sTemp').value, unit: $('sUnit').value,
+  });
+  for (const k of SKEYS) $(k).addEventListener('change', () => {
+    try { const o = {}; for (const kk of SKEYS) o[kk] = $(kk).value; localStorage.setItem('psg-settings', JSON.stringify(o)); } catch (e) { }
+    detOpts(); renderStats(); draw();
+  });
+  const dist = m => { const s = S(); return s.unit === 'yd' ? (m / YD) : m; };
+  const du = () => S().unit === 'yd' ? 'yd' : 'm';
+
+  function envOpts() {
+    const s = S();
+    const P = 101325 * Math.exp(-s.alt / 8434), T = s.temp + 273.15;
+    const th = s.windDir * Math.PI / 180;
+    return { rho: P / (287.05 * T), wind: [Math.sin(th) * s.wind, -Math.cos(th) * s.wind, 0], surface: s.surf };
+  }
+
+  // ---------- 칩/상태 ----------
+  const chip = (txt, cls = '') => { const c = $('chip'); c.textContent = txt; c.className = cls; };
+
+  // ---------- 탭 ----------
+  document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+    document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
+    document.querySelectorAll('.pane').forEach(p => p.classList.toggle('on', p.id === 'p-' + b.dataset.t));
+  });
+
+  // ---------- 샷 / 기록 ----------
+  let shots = [], cur = null, anim = null;
+  const estSpin = (speed, vla) => {
+    const tab = [[0, 1500], [8, 2200], [11, 2600], [14, 4300], [17, 6800], [21, 8200], [26, 9300], [40, 9800]];
+    let v = tab[tab.length - 1][1];
+    for (let i = 1; i < tab.length; i++) if (vla <= tab[i][0]) { const [a, sa] = tab[i - 1], [b, sb] = tab[i]; v = sa + (sb - sa) * (Math.max(vla, a) - a) / (b - a); break; }
+    if (speed < 15) v *= speed / 15; // 짧은 샷·퍼팅
+    return v;
+  };
+
+  function launch(L, src, extra = {}) {
+    const res = Golf.simulate(L, envOpts());
+    const shot = { id: shots.length + 1, src, L, res, extra, time: new Date() };
+    shots.push(shot); if (shots.length > 30) shots.shift();
+    cur = shot;
+    renderStats(); renderHist();
+    startAnim();
+    if (src !== '데모' && navigator.vibrate) try { navigator.vibrate(30); } catch (e) { }
+    return shot;
+  }
+
+  function fromDetector(sh, src) {
+    const s = S();
+    if (!sh.ok) { chip(sh.reason, 'err'); return; }
+    let spin, spinNote;
+    if (sh.spin) { spin = sh.spin; spinNote = `마커 ${sh.spinPairs}쌍`; }
+    else { const b = s.defSpin > 0 ? s.defSpin : estSpin(sh.speed * s.cal, sh.vla); spin = [b, 0, 0]; spinNote = '추정(마커 없음)'; }
+    const L = { speed: sh.speed * s.cal, vla: sh.vla, hla: sh.hla, spin };
+    launch(L, src, { spinNote, frames: sh.frames });
+    chip(`${src} 샷 · ${sh.frames}프레임 · 스핀 ${spinNote}`, 'ok');
+  }
+
+  const fmt = (v, d = 1) => (v == null || !isFinite(v)) ? '—' : v.toFixed(d);
+  function renderStats() {
+    const el = $('stats');
+    const L = cur?.L, r = cur?.res, sp = L ? Golf.describeSpin(L.spin) : null, U = du();
+    const items = [
+      ['볼 스피드', L ? fmt(L.speed) : '—', L ? 'm/s' : '', L ? `${fmt(L.speed * 2.23694, 0)} mph` : ''],
+      ['발사각', L ? fmt(L.vla) : '—', '°'],
+      ['방향각', L ? (L.hla >= 0 ? 'R ' : 'L ') + fmt(Math.abs(L.hla)) : '—', '°'],
+      ['총 스핀', sp ? fmt(sp.total, 0) : '—', 'rpm'],
+      ['백스핀 X', sp ? fmt(sp.back, 0) : '—', 'rpm'],
+      ['사이드 Z', sp ? fmt(sp.side, 0) : '—', 'rpm'],
+      ['라이플 Y', sp ? fmt(sp.rifle, 0) : '—', 'rpm'],
+      ['스핀축', sp ? (sp.axisTilt >= 0 ? 'R ' : 'L ') + fmt(Math.abs(sp.axisTilt)) : '—', '°'],
+      ['캐리', r ? fmt(dist(r.carry)) : '—', U],
+      ['토탈', r ? fmt(dist(r.total)) : '—', U],
+      ['최고 높이', r ? fmt(dist(r.apex)) : '—', U],
+      ['좌우 편차', r ? (r.totalX >= 0 ? 'R ' : 'L ') + fmt(dist(Math.abs(r.totalX))) : '—', U],
+    ];
+    el.innerHTML = items.map(([k, v, u, sub]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}<small>${u}</small></div>${sub ? `<div class="k">${sub}</div>` : ''}</div>`).join('');
+    if (r) {
+      const ob = isOB(r);
+      if (!anim) { $('hudK').textContent = '캐리'; $('hudCarry').textContent = `${fmt(dist(r.carry))} ${U}`; }
+      $('hudSub').innerHTML = `토탈 ${fmt(dist(r.total))} ${U} · 체공 ${fmt(r.flightTime)}s${ob ? ' · <span style="color:var(--bad)">OB</span>' : ''}<br><span class="k">${cur.src}${cur.extra.spinNote ? ' · 스핀 ' + cur.extra.spinNote : ''}</span>`;
+    }
+  }
+  const isOB = r => Math.abs(r.final[0]) > FIELD.w / 2 || r.final[1] > FIELD.l || r.final[1] < 0 || Math.abs(r.landing[0]) > FIELD.w / 2 || r.landing[1] > FIELD.l;
+
+  function renderHist() {
+    $('hBody').innerHTML = shots.slice().reverse().map(s => {
+      const sp = Golf.describeSpin(s.L.spin);
+      return `<tr data-id="${s.id}" class="${s === cur ? 'sel' : ''}"><td>${s.id}</td><td>${s.src}</td><td>${fmt(s.L.speed)}</td><td>${fmt(s.L.vla)}</td><td>${fmt(sp.back, 0)}/${fmt(sp.side, 0)}</td><td>${fmt(dist(s.res.carry))}</td><td>${fmt(dist(s.res.total))}${isOB(s.res) ? '<br><span style="color:var(--bad)">OB</span>' : ''}</td><td>${fmt(dist(s.res.totalX))}</td></tr>`;
+    }).join('');
+    $('hBody').querySelectorAll('tr').forEach(tr => tr.onclick = () => { cur = shots.find(s => s.id == tr.dataset.id); renderStats(); renderHist(); startAnim(); });
+  }
+  $('hClear').onclick = () => { shots = cur ? [cur] : []; renderHist(); draw(); };
+  $('hAll').onchange = () => draw();
+
+  // ---------- 수동 샷 ----------
+  const SL = [
+    ['speed', '볼 스피드', 5, 90, 0.5, 'm/s'], ['vla', '발사각', -5, 60, 0.5, '°'], ['hla', '방향각', -20, 20, 0.5, '°'],
+    ['back', '백스핀 X', -2000, 12000, 50, 'rpm'], ['side', '사이드 Z', -3000, 3000, 50, 'rpm'], ['rifle', '라이플 Y', -2000, 2000, 50, 'rpm'],
+  ];
+  const PRE = {
+    driver: { speed: 70, vla: 11, hla: 0, back: 2600, side: 0, rifle: 0 },
+    wood3: { speed: 63, vla: 9.5, hla: 0, back: 3600, side: 0, rifle: 0 },
+    iron7: { speed: 53.6, vla: 16.3, hla: 0, back: 7000, side: 0, rifle: 0 },
+    pw: { speed: 45, vla: 24, hla: 0, back: 9300, side: 0, rifle: 0 },
+    slice: { speed: 66, vla: 13, hla: 2, back: 3200, side: 700, rifle: 0 },
+    hook: { speed: 68, vla: 10, hla: -2, back: 2400, side: -600, rifle: 0 },
+    topped: { speed: 40, vla: 2, hla: 0, back: 600, side: 0, rifle: 0 },
+  };
+  $('sliders').innerHTML = SL.map(([k, n, a, b, st, u]) => `<div class="sl"><span>${n}</span><input type="range" id="m-${k}" min="${a}" max="${b}" step="${st}"><output id="o-${k}"></output></div>`).join('');
+  const setM = p => { for (const [k] of SL) { $('m-' + k).value = p[k]; } updM(); };
+  const updM = () => { for (const [k, , , , , u] of SL) $('o-' + k).textContent = $('m-' + k).value + ' ' + u; };
+  SL.forEach(([k]) => $('m-' + k).oninput = updM);
+  document.querySelectorAll('.presets button').forEach(b => b.onclick = () => setM(PRE[b.dataset.p]));
+  setM(PRE.driver);
+  $('fire').onclick = () => {
+    const g = k => +$('m-' + k).value;
+    // 사이드 + = 오른쪽으로 휨 → ωz = -side
+    launch({ speed: g('speed'), vla: g('vla'), hla: g('hla'), spin: [g('back'), g('rifle'), -g('side')] }, '수동');
+    chip('수동 샷', 'ok');
+  };
+
+  // ---------- 3D 필드 렌더러 ----------
+  const cv = $('field'), ctx = cv.getContext('2d');
+  let W = 0, H = 0, DPR = 1, view = 'behind';
+  function resize() {
+    const r = cv.getBoundingClientRect();
+    DPR = Math.min(2, window.devicePixelRatio || 1);
+    W = r.width; H = r.height;
+    cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+    draw();
+  }
+  window.addEventListener('resize', resize);
+  document.querySelectorAll('.views button').forEach(b => b.onclick = () => {
+    view = b.dataset.v; document.querySelectorAll('.views button').forEach(x => x.classList.toggle('on', x === b)); draw();
+  });
+
+  const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const crs = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const nrm = a => { const l = Math.hypot(...a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+
+  // 카메라(시점) 구성: 원근(후방·추적) / 평행(상공·측면)
+  let CAM;
+  function setupCam(ballPos) {
+    if (view === 'top') {
+      const land = W > H * 1.3;
+      const s = land ? Math.min(W / 430, H / 115) : Math.min(W / 115, H / 430);
+      CAM = { ortho: true, f: p => land ? [W / 2 + (p[1] - 200) * s, H / 2 + p[0] * s, 1] : [W / 2 + p[0] * s, H / 2 - (p[1] - 200) * s, 1], s };
+      return;
+    }
+    if (view === 'side') {
+      const apex = Math.max(30, ...(cur ? [cur.res.apex] : [0]));
+      const sh = W / 430, svv = Math.min(sh * 4, (H * 0.62) / apex);
+      CAM = { ortho: true, side: true, ex: svv / sh, f: p => [12 + (p[1] + 10) * sh, H * 0.82 - p[2] * svv, 1], s: sh };
+      return;
+    }
+    let eye, tgt, fov = 52;
+    if (view === 'follow' && ballPos) {
+      eye = [ballPos[0] * 0.7, ballPos[1] - 32, Math.max(5, ballPos[2] * 0.75 + 6)];
+      tgt = [ballPos[0], ballPos[1] + 35, ballPos[2] * 0.6];
+    } else { eye = [0, -32, 20]; tgt = [0, 175, 0]; }
+    const fw = nrm(sub(tgt, eye)), rt = nrm(crs(fw, [0, 0, 1])), up = crs(rt, fw);
+    const F = (H / 2) / Math.tan(fov * Math.PI / 360);
+    CAM = { ortho: false, eye, fw, rt, up, F, toC: p => { const d = sub(p, eye); return [dot(d, rt), dot(d, up), dot(d, fw)]; } };
+  }
+  const NEAR = 0.3;
+  const projC = c => [W / 2 + c[0] / c[2] * CAM.F, H / 2 - c[1] / c[2] * CAM.F];
+  function P(p) { // 월드 → 화면 (가려지면 null)
+    if (CAM.ortho) return CAM.f(p);
+    const c = CAM.toC(p); if (c[2] < NEAR) return null; const s = projC(c); return [s[0], s[1], c[2]];
+  }
+  function poly(pts, fill, stroke) { // 근평면 클리핑
+    let sp;
+    if (CAM.ortho) sp = pts.map(CAM.f);
+    else {
+      const c = pts.map(CAM.toC), out = [];
+      for (let i = 0; i < c.length; i++) {
+        const a = c[i], b = c[(i + 1) % c.length];
+        const ai = a[2] >= NEAR, bi = b[2] >= NEAR;
+        if (ai) out.push(a);
+        if (ai !== bi) { const t = (NEAR - a[2]) / (b[2] - a[2]); out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, NEAR]); }
+      }
+      if (out.length < 3) return;
+      sp = out.map(projC);
+    }
+    ctx.beginPath(); sp.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.closePath();
+    if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+    if (stroke) { ctx.strokeStyle = stroke; ctx.stroke(); }
+  }
+  function line3(pts, style, width, dash) {
+    ctx.strokeStyle = style; ctx.lineWidth = width; ctx.setLineDash(dash || []);
+    ctx.beginPath();
+    let pen = false;
+    if (CAM.ortho) { pts.forEach((p, i) => { const s = CAM.f(p); i ? ctx.lineTo(s[0], s[1]) : ctx.moveTo(s[0], s[1]); }); }
+    else {
+      let prev = null;
+      for (const p of pts) {
+        const c = CAM.toC(p);
+        if (prev) {
+          let a = prev, b = c;
+          const ai = a[2] >= NEAR, bi = b[2] >= NEAR;
+          if (ai || bi) {
+            if (!ai) { const t = (NEAR - a[2]) / (b[2] - a[2]); a = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, NEAR]; pen = false; }
+            if (!bi) { const t = (NEAR - a[2]) / (b[2] - a[2]); b = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, NEAR]; }
+            const sa = projC(a), sb = projC(b);
+            if (!pen) { ctx.moveTo(sa[0], sa[1]); pen = true; }
+            ctx.lineTo(sb[0], sb[1]);
+            if (!bi) pen = false;
+          } else pen = false;
+        }
+        prev = c;
+      }
+    }
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+  function label(p, txt, color = '#fff', size = 11, align = 'center', dy = 0) {
+    const s0 = P(p); if (!s0) return null; const s = [s0[0], s0[1] + dy];
+    ctx.font = `600 ${size}px system-ui,sans-serif`; ctx.textAlign = align; ctx.textBaseline = 'middle';
+    ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.strokeText(txt, s[0], s[1]);
+    ctx.fillStyle = color; ctx.fillText(txt, s[0], s[1]);
+    return s;
+  }
+
+  function drawGround() {
+    // 하늘
+    if (!CAM.ortho || CAM.side) {
+      const g = ctx.createLinearGradient(0, 0, 0, H);
+      g.addColorStop(0, '#5b93c7'); g.addColorStop(0.55, '#a9cbe3'); g.addColorStop(1, '#d9e7ee');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    } else { ctx.fillStyle = '#2a4a28'; ctx.fillRect(0, 0, W, H); }
+    if (CAM.side) {
+      const gy = CAM.f([0, 0, 0])[1];
+      ctx.fillStyle = '#3f7a37'; ctx.fillRect(0, gy, W, H - gy);
+      const xl = CAM.f([0, FIELD.l, 0])[0];
+      ctx.fillStyle = '#2d5a29'; ctx.fillRect(xl, gy, W - xl, H - gy);
+      ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.lineWidth = 1;
+      for (let y = 0; y <= FIELD.l; y += 50) { const s = CAM.f([0, y, 0]); ctx.beginPath(); ctx.moveTo(s[0], gy); ctx.lineTo(s[0], gy + 6); ctx.stroke(); label([0, y, -12 / (CAM.ex * CAM.s)], y ? `${Math.round(dist(y))}` : '0', '#fff', 10); }
+      for (let z = 10; z <= 80; z += 10) { const s = CAM.f([0, -10, z]); if (s[1] < 10) break; ctx.fillStyle = 'rgba(255,255,255,.12)'; ctx.fillRect(0, s[1], W, 1); ctx.fillStyle = 'rgba(20,40,60,.7)'; ctx.font = '10px system-ui'; ctx.textAlign = 'left'; ctx.fillText(`${Math.round(dist(z))}${du()}`, 2, s[1] - 5); }
+      ctx.fillStyle = 'rgba(0,0,0,.45)'; ctx.font = '10px system-ui'; ctx.textAlign = 'left'; ctx.fillText(`높이 ${CAM.ex.toFixed(1)}배 확대 표시`, 8, H - 50);
+      return;
+    }
+    // 러프(필드 바깥)
+    poly([[-600, -120, 0], [600, -120, 0], [600, 1400, 0], [-600, 1400, 0]], '#2f5a2c');
+    // 페어웨이 줄무늬
+    for (let y = 0; y < FIELD.l; y += 20) poly([[-50, y, 0], [50, y, 0], [50, y + 20, 0], [-50, y + 20, 0]], (y / 20) % 2 ? '#4f9442' : '#5aa34b');
+    // 티 박스
+    poly([[-3, -3, 0], [3, -3, 0], [3, 1, 0], [-3, 1, 0]], '#79bf62');
+    // OB 경계
+    line3([[-50, 0, 0], [-50, FIELD.l, 0], [50, FIELD.l, 0], [50, 0, 0], [-50, 0, 0]], 'rgba(255,255,255,.95)', 2);
+    // 거리선
+    let lastY = Infinity;
+    for (let y = 50; y <= FIELD.l; y += 50) {
+      line3([[-50, y, 0], [50, y, 0]], 'rgba(255,255,255,.35)', 1);
+      const t = S().unit === 'yd' ? `${Math.round(y / YD)}yd` : `${y}m`;
+      const sp = P([-50, y, 0]);
+      if (!sp || (!CAM.ortho && lastY - sp[1] < 13)) continue; // 원근으로 겹치는 먼 거리 표기는 생략
+      lastY = sp[1];
+      if (CAM.ortho) label([-51, y, 0], t, 'rgba(255,255,255,.85)', 10, 'right');
+      else label([-50, y, 0], t, '#fff', 11, 'right');
+    }
+    line3([[0, 0, 0], [0, FIELD.l, 0]], 'rgba(255,255,255,.22)', 1, [6, 8]);
+    // OB 말뚝
+    if (!CAM.ortho) for (let y = 0; y <= FIELD.l; y += 25) for (const x of [-50, 50]) {
+      const a = P([x, y, 0]), b = P([x, y, 1.2]); if (!a || !b) continue;
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(1, 30 / a[2]); ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+    }
+    if (CAM.ortho) { const a = P([0, 0, 0]); ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(a[0], a[1], 3, 0, 7); ctx.fill(); }
+  }
+
+  function pathUpTo(res, tt) {
+    const pts = res.pts, out = [];
+    for (let i = 0; i < pts.length; i++) {
+      if (pts[i].t <= tt) out.push(pts[i].p);
+      else { const a = pts[i - 1], b = pts[i]; if (a) { const k = (tt - a.t) / (b.t - a.t); out.push(a.p.map((v, j) => v + (b.p[j] - v) * k)); } break; }
+    }
+    return out;
+  }
+
+  function drawShot(shot, tt, main) {
+    const res = shot.res;
+    const path = pathUpTo(res, tt);
+    if (path.length < 2) return path[0];
+    const ground = path.map(p => [p[0], p[1], 0]);
+    if (!CAM.side) line3(ground, main ? 'rgba(0,0,0,.28)' : 'rgba(0,0,0,.12)', main ? 2 : 1);
+    line3(path, main ? '#ffe45c' : 'rgba(255,255,255,.45)', main ? 2.5 : 1.2);
+    const last = path[path.length - 1];
+    if (main) {
+      if (tt >= res.flightTime) {
+        // 낙하 지점
+        const L = res.landing, ring = [];
+        for (let a = 0; a <= 24; a++) ring.push([L[0] + Math.cos(a / 24 * 6.283) * 2.5, L[1] + Math.sin(a / 24 * 6.283) * 2.5, 0]);
+        if (!CAM.side) line3(ring, '#ffe45c', 1.5);
+        label([L[0], L[1], 0], `캐리 ${fmt(dist(res.carry))}`, '#ffe45c', 11, 'center', CAM.side ? -12 : 14);
+      }
+      const end = res.pts[res.pts.length - 1].t;
+      if (tt >= end) {
+        const F = res.final;
+        if (!CAM.ortho) { const a = P(F), b = P([F[0], F[1], 4]); if (a && b) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke(); ctx.fillStyle = isOB(res) ? '#ff6b6b' : '#ffe45c'; ctx.beginPath(); ctx.moveTo(b[0], b[1]); ctx.lineTo(b[0] + 12, b[1] + 4); ctx.lineTo(b[0], b[1] + 8); ctx.fill(); } }
+        label([F[0], F[1], CAM.ortho ? 0 : 5.5], `${fmt(dist(res.total))}${du()}${isOB(res) ? ' OB' : ''}`, isOB(res) ? '#ff8a8a' : '#fff', 12, 'center', CAM.side ? -28 : CAM.ortho ? -14 : -8);
+      }
+    }
+    return last;
+  }
+
+  function draw(tt) {
+    if (!W) return;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    let ballPos = null;
+    if (cur) ballPos = pathUpTo(cur.res, tt ?? 1e9).slice(-1)[0];
+    setupCam(ballPos);
+    drawGround();
+    if ($('hAll').checked) for (const s of shots) if (s !== cur) drawShot(s, 1e9, false);
+    if (cur) {
+      const last = drawShot(cur, tt ?? 1e9, true);
+      if (last) {
+        const s = P(last);
+        if (s) {
+          const rad = CAM.ortho ? 3.5 : Math.max(2.5, Math.min(8, 60 / s[2]));
+          ctx.fillStyle = '#fff'; ctx.strokeStyle = '#222'; ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.arc(s[0], s[1], rad, 0, 7); ctx.fill(); ctx.stroke();
+        }
+      }
+    }
+  }
+
+  function startAnim() {
+    if (anim) cancelAnimationFrame(anim.raf);
+    if (!cur) return;
+    const res = cur.res, end = res.pts[res.pts.length - 1].t;
+    const t0 = performance.now();
+    const step = now => {
+      const real = (now - t0) / 1000;
+      // 비행은 실시간, 구름은 2배속
+      const tt = real <= res.flightTime ? real : res.flightTime + (real - res.flightTime) * 2.5;
+      const path = pathUpTo(res, tt), p = path[path.length - 1];
+      if (p) { $('hudK').textContent = tt < res.flightTime ? '비행 중' : '구르는 중'; $('hudCarry').textContent = `${fmt(dist(Math.hypot(p[0], p[1])))} ${du()}`; }
+      draw(Math.min(tt, end));
+      if (tt < end) anim.raf = requestAnimationFrame(step);
+      else { anim = null; renderStats(); draw(); }
+    };
+    anim = { raf: requestAnimationFrame(step) };
+  }
+  $('replay').onclick = () => startAnim();
+
+  // ---------- 공통: 프레임 → 그레이스케일 ----------
+  function makeProc() {
+    const c = document.createElement('canvas');
+    const x = c.getContext('2d', { willReadFrequently: true });
+    return {
+      c, x,
+      grab(src, sw, sh) {
+        const pw = Math.min(S().proc, sw), ph = Math.round(sh * pw / sw);
+        if (c.width !== pw || c.height !== ph) { c.width = pw; c.height = ph; }
+        x.drawImage(src, 0, 0, pw, ph);
+        const d = x.getImageData(0, 0, pw, ph).data, g = new Uint8Array(pw * ph);
+        for (let i = 0, j = 0; i < g.length; i++, j += 4) g[i] = (d[j] * 77 + d[j + 1] * 150 + d[j + 2] * 29) >> 8;
+        return { gray: g, w: pw, h: ph };
+      },
+      put(gray, w, h) { // 네이티브에서 받은 그레이 프레임을 미리보기용 캔버스로
+        if (c.width !== w || c.height !== h) { c.width = w; c.height = h; this.img = null; }
+        if (!this.img) this.img = x.createImageData(w, h);
+        const d = this.img.data;
+        for (let i = 0, j = 0; i < w * h; i++, j += 4) { const v = gray[i]; d[j] = d[j + 1] = d[j + 2] = v; d[j + 3] = 255; }
+        x.putImageData(this.img, 0, 0);
+      }
+    };
+  }
+  function detOpts(det) {
+    const s = S(), o = { camDist: s.dist, dir: s.dir, thr: s.thr, diffThr: s.diff, useDepth: s.depth };
+    if (det) det.set(o); else { camDet?.set(o); vidDet?.set(o); }
+    return o;
+  }
+  function overlay(cnv, proc, out, msgEl) {
+    const c = cnv.getContext('2d');
+    if (cnv.width !== proc.c.width || cnv.height !== proc.c.height) { cnv.width = proc.c.width; cnv.height = proc.c.height; }
+    c.drawImage(proc.c, 0, 0);
+    c.lineWidth = 2;
+    if (out.cand && out.state === 'search') { c.strokeStyle = '#ffe45c'; c.beginPath(); c.arc(out.cand.cx, out.cand.cy, out.cand.r + 3, 0, 7); c.stroke(); }
+    if (out.rest) { c.strokeStyle = out.state === 'ready' ? '#5fd39a' : 'rgba(95,211,154,.5)'; c.beginPath(); c.arc(out.rest.cx, out.rest.cy, out.rest.r + 4, 0, 7); c.stroke(); }
+    for (const p of out.track || []) { c.strokeStyle = p.mk ? '#ff6b6b' : '#ffb454'; c.beginPath(); c.arc(p.u, p.v, p.r, 0, 7); c.stroke(); }
+    c.fillStyle = 'rgba(0,0,0,.55)'; c.fillRect(0, 0, 150, 18); c.fillStyle = '#fff'; c.font = '11px monospace';
+    c.fillText(`${out.state} thr=${out.thr | 0}`, 4, 13);
+    if (msgEl) msgEl.textContent = out.msg;
+  }
+
+  // ---------- 실시간 카메라 ----------
+  let camStream = null, camDet = null, camProc = makeProc(), camRun = false, camVideo = null;
+  const camWarn = t => { const w = $('camWarn'); w.style.display = t ? 'block' : 'none'; w.innerHTML = t || ''; };
+  async function listCams() {
+    try {
+      const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+      const sel = $('camSel'), prev = sel.value;
+      sel.innerHTML = (devs.length || NATIVE.port) ? '' : '<option value="">카메라 없음</option>';
+      if (NATIVE.port) { const o = document.createElement('option'); o.value = '__uvc__'; o.textContent = '🔌 USB 카메라 (앱 내장 UVC 드라이버)'; sel.appendChild(o); }
+      devs.forEach((d, i) => { const o = document.createElement('option'); o.value = d.deviceId; o.textContent = d.label || `카메라 ${i + 1}`; if (/usb|uvc|external|외부/i.test(d.label)) o.textContent += ' (USB)'; sel.appendChild(o); });
+      if (prev) sel.value = prev;
+      const usb = devs.find(d => /usb|uvc|external/i.test(d.label));
+      if (usb && !prev) sel.value = usb.deviceId;
+      if (NATIVE.port && (!prev || prev === '__uvc__')) sel.value = '__uvc__';
+    } catch (e) { if (NATIVE.port) $('camSel').innerHTML = '<option value="__uvc__">🔌 USB 카메라 (앱 내장 UVC 드라이버)</option>'; }
+    onCamSel();
+  }
+  $('camRefresh').onclick = () => { if (NATIVE.port) NATIVE.send({ cmd: 'list' }); listCams(); };
+  const WEB_RES = $('camRes').innerHTML;
+  function onCamSel() {
+    const uvc = $('camSel').value === '__uvc__';
+    $('camFps').style.display = uvc ? 'none' : ''; $('camFpsL').style.display = uvc ? 'none' : '';
+    const want = uvc ? (NATIVE.sizes.length ? NATIVE.sizes.map(z => `<option value="${z}">${z.replace('x', '×')}</option>`).join('') : '<option value="640x480">640×480</option>') : WEB_RES;
+    if ($('camRes').dataset.mode !== (uvc ? 'u' + want.length : 'w')) { const prev = $('camRes').value; $('camRes').innerHTML = want; $('camRes').dataset.mode = uvc ? 'u' + want.length : 'w'; if ([...$('camRes').options].some(o => o.value === prev)) $('camRes').value = prev; }
+  }
+  $('camSel').onchange = onCamSel;
+  $('camStart').onclick = async () => {
+    if (camRun) return stopCam();
+    camWarn('');
+    if ($('camSel').value === '__uvc__') return startNative();
+    if (!navigator.mediaDevices?.getUserMedia) { camWarn('이 환경에서는 카메라를 쓸 수 없습니다. <b>HTTPS 주소</b>(또는 localhost)로 연 페이지에서만 카메라가 동작합니다. 미리보기 창 안에서는 카메라가 차단되니, 아래 안내대로 휴대폰 브라우저에서 직접 여세요.'); return; }
+    const [w, h] = $('camRes').value.split('x').map(Number);
+    const fps = +$('camFps').value;
+    const id = $('camSel').value;
+    try {
+      camStream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { deviceId: id ? { exact: id } : undefined, width: { ideal: w }, height: { ideal: h }, frameRate: { ideal: fps } } });
+    } catch (e) {
+      let inFrame = false; try { inFrame = window.top !== window; } catch (x) { inFrame = true; }
+      camWarn(`카메라를 열 수 없습니다: <b>${e.name}</b> ${e.message || ''}<br>${inFrame ? '· <b>지금은 미리보기 창 안이라 카메라가 차단됩니다.</b> HTML 파일을 HTTPS 주소로 올려 휴대폰 Chrome에서 직접 여세요.<br>' : ''}· 권한을 허용했는지 확인하세요.<br>· USB 카메라가 목록에 없다면, 이 휴대폰의 Android가 외부 USB 카메라를 브라우저에 노출하지 않는 경우입니다(제조사별 선택 기능). 이때는 <b>폰 스크린골프 안드로이드 앱</b>으로 열거나, <b>영상 분석</b> 탭(촬영한 영상)을 쓰세요.`);
+      return;
+    }
+    await listCams();
+    const tr = camStream.getVideoTracks()[0], st = tr.getSettings();
+    $('camInfo').textContent = `${tr.label || '카메라'} · ${st.width}×${st.height} @ ${st.frameRate ? st.frameRate.toFixed(0) : '?'}fps 요청 결과`;
+    if ((st.frameRate || 30) < 100) camWarn(`현재 <b>${(st.frameRate || 30).toFixed(0)} fps</b>입니다. 풀스윙 공(50 m/s 이상)은 한두 프레임 안에 화면을 지나가므로 속도·스핀 측정이 어렵습니다. <b>120 fps 이상(권장 240 fps+) 글로벌 셔터 USB 카메라</b>를 쓰거나, 짧은 칩·퍼팅으로 먼저 시험하세요.`);
+    camDet = new Detector.ShotDetector({}); detOpts(camDet);
+    camRun = true; $('camStart').textContent = '정지'; chip('카메라 실행 중', 'live');
+    let lastT = -1, n = 0, tf = performance.now();
+    const handle = (src, sw, sh, t) => {
+      if (t <= lastT) return; lastT = t;
+      const f = camProc.grab(src, sw, sh); f.t = t;
+      const out = camDet.process(f);
+      n++;
+      if (n % 2 === 0 || out.state === 'track') overlay($('preview'), camProc, out, $('camMsg'));
+      const now = performance.now();
+      if (now - tf > 1000) { $('camInfo').textContent = `${tr.label || '카메라'} · ${f.w}×${f.h} 처리 · 실측 ${(n * 1000 / (now - tf)).toFixed(0)} fps`; n = 0; tf = now; }
+      if (out.shot) fromDetector(out.shot, '카메라');
+    };
+    if ('MediaStreamTrackProcessor' in window) {
+      // 모든 프레임을 화면 주사율과 무관하게 받음 (Chrome)
+      const reader = new MediaStreamTrackProcessor({ track: tr }).readable.getReader();
+      (async () => {
+        while (camRun) {
+          const { value: fr, done } = await reader.read(); if (done || !fr) break;
+          try { handle(fr, fr.displayWidth, fr.displayHeight, fr.timestamp / 1e6); } finally { fr.close(); }
+        }
+      })();
+    } else {
+      camVideo = document.createElement('video'); camVideo.muted = true; camVideo.playsInline = true; camVideo.srcObject = camStream; await camVideo.play();
+      const cb = (now, meta) => { if (!camRun) return; handle(camVideo, camVideo.videoWidth, camVideo.videoHeight, (meta.captureTime ?? meta.expectedDisplayTime ?? now) / 1000); camVideo.requestVideoFrameCallback(cb); };
+      if (camVideo.requestVideoFrameCallback) camVideo.requestVideoFrameCallback(cb);
+      else { const loop = () => { if (!camRun) return; handle(camVideo, camVideo.videoWidth, camVideo.videoHeight, performance.now() / 1000); requestAnimationFrame(loop); }; loop(); }
+    }
+  };
+  function stopCam() { if (NATIVE.run) { NATIVE.send({ cmd: 'stop' }); NATIVE.run = false; } camRun = false; camStream?.getTracks().forEach(t => t.stop()); camStream = null; $('camStart').textContent = '카메라 시작'; chip('대기'); }
+  $('camReset').onclick = () => { if (camDet) { camDet.seed = null; camDet.reset(); } };
+  $('preview').addEventListener('click', e => {
+    if (!camDet) return;
+    const r = e.target.getBoundingClientRect();
+    camDet.setSeed((e.clientX - r.left) / r.width * e.target.width, (e.clientY - r.top) / r.height * e.target.height);
+  });
+  if (navigator.mediaDevices?.enumerateDevices) listCams();
+
+  // ---------- 안드로이드 앱(USB/UVC 네이티브 드라이버) 브리지 ----------
+  // 앱(ScreenGolf APK)이 USB 카메라를 직접 열고, 그레이 프레임을 WebMessagePort로 보내준다.
+  // 프레임 형식(ArrayBuffer, little-endian): [u16 w][u16 h][i64 timestamp ns][w*h 바이트 Y(밝기)]
+  const NATIVE = { port: null, run: false, sizes: [], ts: null, n: 0, tf: 0, info: '', send(o) { try { this.port?.postMessage(typeof o === 'string' ? o : JSON.stringify(o)); } catch (e) { } } };
+  window.addEventListener('message', e => {
+    if (e.data !== 'psg-native-init' || !e.ports || !e.ports[0]) return;
+    NATIVE.port = e.ports[0];
+    NATIVE.port.onmessage = ev => onNative(ev.data);
+    $('camWarn').style.display = 'none';
+    $('appBadge').style.display = 'inline';
+    $('usbHint').style.display = 'none';
+    NATIVE.send({ cmd: 'hello' }); NATIVE.send({ cmd: 'list' });
+    listCams();
+  });
+  function b64ToBuf(s) { const bin = atob(s), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u.buffer; }
+  function onNative(d) {
+    if (typeof d === 'string') {
+      if (d.startsWith('b64:')) return nativeFrame(b64ToBuf(d.slice(4)));
+      let m; try { m = JSON.parse(d); } catch (e) { return; }
+      if (m.type === 'status') {
+        if (Array.isArray(m.sizes) && m.sizes.length) { NATIVE.sizes = m.sizes; onCamSel(); }
+        NATIVE.info = `${m.device || 'USB 카메라 없음'}${m.size ? ' · ' + m.size : ''}${m.fps ? ` · 수신 ${m.fps.toFixed(0)} fps` : ''}${m.drops ? ` · 버림 ${m.drops}` : ''}`;
+        if (!NATIVE.run) $('camInfo').textContent = NATIVE.info;
+        if (m.msg) $('camMsg').textContent = m.msg;
+        if (m.state === 'error') { camWarn(m.msg); chip('USB 카메라 오류', 'err'); }
+        if (m.state === 'closed' && NATIVE.run) { NATIVE.run = false; camRun = false; $('camStart').textContent = '카메라 시작'; chip('대기'); }
+      }
+      return;
+    }
+    if (d instanceof ArrayBuffer) nativeFrame(d);
+  }
+  function startNative() {
+    const [w, h] = $('camRes').value.split('x').map(Number);
+    camDet = new Detector.ShotDetector({}); detOpts(camDet);
+    NATIVE.ts = null; NATIVE.n = 0; NATIVE.tf = performance.now();
+    NATIVE.run = true; camRun = true;
+    $('camStart').textContent = '정지'; chip('USB 카메라 연결 중', 'live');
+    $('camMsg').textContent = 'USB 카메라 권한을 허용해 주세요…';
+    NATIVE.send({ cmd: 'start', width: w || 640, height: h || 480, procW: S().proc });
+  }
+  // USB 전송 지터 보정: 프레임 간격을 추정해 균일한 시간축으로 재구성(누락 프레임은 간격 배수로 계산)
+  function smoothT(tRaw) {
+    const T = NATIVE.ts;
+    if (!T) { NATIVE.ts = { last: tRaw, dt: 0, t: 0, warm: [] }; return 0; }
+    const d = tRaw - T.last; T.last = tRaw;
+    if (d <= 0) return T.t;
+    if (T.warm.length < 15) { T.warm.push(d); const a = T.warm.slice().sort((p, q) => p - q); T.dt = a[a.length >> 1]; }
+    else if (d > 0.6 * T.dt && d < 1.4 * T.dt) T.dt = T.dt * 0.99 + d * 0.01;
+    T.t += Math.max(1, Math.round(d / T.dt)) * T.dt;
+    return T.t;
+  }
+  function nativeFrame(buf) {
+    NATIVE.send('ack');
+    if (!NATIVE.run || !camDet) return;
+    const dv = new DataView(buf), w = dv.getUint16(0, true), h = dv.getUint16(2, true);
+    const tNs = Number(dv.getBigInt64(4, true));
+    if (buf.byteLength < 12 + w * h) return;
+    const gray = new Uint8Array(buf, 12, w * h);
+    const t = $('sTsFix').value === '1' ? smoothT(tNs / 1e9) : tNs / 1e9;
+    const out = camDet.process({ gray, w, h, t });
+    NATIVE.n++;
+    if (NATIVE.n % 2 === 0 || out.state === 'track') { camProc.put(gray, w, h); overlay($('preview'), camProc, out, $('camMsg')); }
+    const now = performance.now();
+    if (now - NATIVE.tf > 1000) {
+      const fps = NATIVE.n * 1000 / (now - NATIVE.tf); NATIVE.n = 0; NATIVE.tf = now;
+      $('camInfo').textContent = `${NATIVE.info} · 처리 ${w}×${h} @ ${fps.toFixed(0)} fps${NATIVE.ts?.dt ? ` · 프레임간격 ${(NATIVE.ts.dt * 1000).toFixed(1)} ms` : ''}`;
+      if (fps > 0 && chipEl().textContent.startsWith('USB 카메라 연결')) chip('USB 카메라 실행 중', 'live');
+    }
+    if (out.shot) fromDetector(out.shot, 'USB');
+  }
+  const chipEl = () => $('chip');
+
+  // ---------- 영상 파일 분석 ----------
+  let vidDet = null, vidProc = makeProc(), vEl = document.createElement('video');
+  vEl.muted = true; vEl.playsInline = true; vEl.preload = 'auto';
+  $('vfile').onchange = e => {
+    const f = e.target.files[0]; if (!f) return;
+    vEl.src = URL.createObjectURL(f);
+    vEl.onloadeddata = () => { $('vgo').disabled = false; $('vmsg').textContent = `${vEl.videoWidth}×${vEl.videoHeight}, ${vEl.duration.toFixed(2)}초`; vEl.currentTime = 0.001; };
+    vEl.onseeked = () => { if (!vRun) { const fr = vidProc.grab(vEl, vEl.videoWidth, vEl.videoHeight); overlay($('vprev'), vidProc, { state: '미리보기', track: [], thr: 0, msg: '' }); } };
+  };
+  let vRun = false;
+  $('vgo').onclick = async () => {
+    if (vRun) { vRun = false; vEl.pause(); $('vgo').textContent = '분석 시작'; return; }
+    if (!vEl.requestVideoFrameCallback) { $('vmsg').textContent = '이 브라우저는 프레임 단위 분석(requestVideoFrameCallback)을 지원하지 않습니다. 최신 Chrome/Safari를 쓰세요.'; return; }
+    vidDet = new Detector.ShotDetector({}); detOpts(vidDet);
+    vRun = true; $('vgo').textContent = '중지';
+    const vfps = +$('vfps').value || 0;
+    let lastMT = -1, minDt = Infinity, found = 0;
+    vEl.pause(); vEl.currentTime = 0; vEl.playbackRate = +$('vrate').value;
+    const cb = (now, meta) => {
+      if (!vRun) return;
+      const mt = meta.mediaTime;
+      if (mt > lastMT) {
+        if (lastMT >= 0) minDt = Math.min(minDt, mt - lastMT);
+        lastMT = mt;
+        // 실제 시간 = 파일 프레임 번호 / 촬영 fps (슬로모션 영상 보정)
+        const t = (vfps > 0 && isFinite(minDt)) ? Math.round(mt / minDt) / vfps : mt;
+        const f = vidProc.grab(vEl, vEl.videoWidth, vEl.videoHeight); f.t = t;
+        const out = vidDet.process(f);
+        overlay($('vprev'), vidProc, out, $('vmsg'));
+        if (out.shot) { found++; fromDetector(out.shot, '영상'); }
+        $('vbar').style.width = (100 * mt / vEl.duration).toFixed(1) + '%';
+      }
+      if (!vEl.ended) vEl.requestVideoFrameCallback(cb);
+    };
+    vEl.onended = () => { vRun = false; $('vgo').textContent = '분석 시작'; $('vbar').style.width = '100%'; $('vmsg').textContent = found ? `완료 — 샷 ${found}개 검출` : `완료 — 샷을 찾지 못했습니다 (${vidDet.msg})`; };
+    vEl.requestVideoFrameCallback(cb);
+    try { await vEl.play(); } catch (e) { $('vmsg').textContent = '재생 실패: ' + e.message; vRun = false; }
+  };
+
+  // ---------- 시작 ----------
+  renderStats(); renderHist();
+  requestAnimationFrame(() => { resize(); launch({ speed: 70, vla: 11, hla: 0, spin: [2600, 0, 0] }, '데모'); });
+})();
+
+</script>
+</body>
+</html>
