@@ -78,6 +78,10 @@ class MainActivity : AppCompatActivity() {
     private var device: UsbDevice? = null
     private var wantRun = false
     private var state = "idle"
+    // 같은 장치를 두 번 열면 라이브러리가 "the device is occupied" 오류를 내므로, 선택·열기 요청을 한 번만 보낸다
+    private var selectPending = false
+    private var openPending = false
+    private var occupiedRetries = 0
     private var reqW = 640
     private var reqH = 480
     @Volatile private var procW = 480
@@ -269,9 +273,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startCamera() {
-        if (state == "open") { // 이미 열려 있으면 해상도만 다시 적용
+        val opened = try { helper?.isCameraOpened == true } catch (e: Exception) { false }
+        if (state == "open" || opened) { // 이미 열려 있으면 해상도만 다시 적용
+            wantRun = true
             safe { helper?.stopPreview() }
             onOpened()
+            return
+        }
+        if (selectPending || openPending) {
+            sendStatus("USB 카메라를 여는 중입니다… 잠시만 기다려 주세요.")
             return
         }
         // 안드로이드 9+ 는 UVC(비디오 클래스) USB 장치 접근에도 CAMERA 권한을 요구한다
@@ -290,12 +300,30 @@ class MainActivity : AppCompatActivity() {
         wantRun = true
         device = d
         state = "opening"
+        occupiedRetries = 0
+        selectPending = true
         sendStatus("USB 권한을 요청합니다… 대화상자에서 '허용'을 눌러 주세요.")
         safe { helper?.selectDevice(d) }
     }
 
+    private fun openCameraOnce() {
+        if (openPending) return
+        val opened = try { helper?.isCameraOpened == true } catch (e: Exception) { false }
+        if (opened) { runOnUiThread { onOpened() }; return }
+        openPending = true
+        safe { helper?.openCamera() }
+        main.postDelayed({
+            if (openPending && state != "open") {
+                openPending = false
+                sendStatus("카메라 열기 응답이 없습니다. 카메라를 다시 꽂고 '카메라 시작'을 눌러 주세요.")
+            }
+        }, 8000)
+    }
+
     private fun stopCamera() {
         wantRun = false
+        selectPending = false
+        openPending = false
         safe { helper?.stopPreview() }
         safe { helper?.closeCamera() }
         state = "closed"
@@ -312,10 +340,22 @@ class MainActivity : AppCompatActivity() {
         when (method.name) {
             "onAttach" -> {
                 sendStatus("USB 장치 연결됨")
-                if (wantRun && state != "open" && dev != null) safe { helper?.selectDevice(dev) }
+                // 시작 버튼을 누른 뒤 카메라를 새로 꽂은 경우에만 선택 (이미 선택 중이면 중복 호출 금지)
+                if (wantRun && state == "closed" && !selectPending && dev != null) {
+                    selectPending = true
+                    state = "opening"
+                    safe { helper?.selectDevice(dev) }
+                }
             }
-            "onDeviceOpen" -> safe { helper?.openCamera() }
-            "onCameraOpen" -> runOnUiThread { onOpened() }
+            "onDeviceOpen" -> {
+                selectPending = false
+                openCameraOnce()
+            }
+            "onCameraOpen" -> {
+                openPending = false
+                occupiedRetries = 0
+                runOnUiThread { onOpened() }
+            }
             "onCameraClose" -> {
                 if (surfaceReady) safe { helper?.removeSurface(surfaceView.holder.surface) }
                 state = "closed"
@@ -323,19 +363,36 @@ class MainActivity : AppCompatActivity() {
             }
             "onDetach" -> {
                 state = "closed"
+                selectPending = false
+                openPending = false
                 device = null
                 sendStatus("USB 카메라가 분리되었습니다")
             }
             "onCancel" -> {
+                selectPending = false
                 state = "error"
                 wantRun = false
                 sendStatus("USB 권한이 거부되었습니다. 다시 '카메라 시작'을 누르고 '허용'을 선택하세요.")
             }
             "onError" -> {
-                state = "error"
+                openPending = false
+                selectPending = false
                 val err = args?.getOrNull(1)
-                Log.e(TAG, "camera error: $err")
-                sendStatus("카메라 오류: ${(err as? Throwable)?.message ?: err ?: "알 수 없음"}")
+                val text = (err as? Throwable)?.message ?: err?.toString() ?: "알 수 없음"
+                Log.e(TAG, "camera error: $text")
+                if (text.contains("occupied", ignoreCase = true) && occupiedRetries < 2 && wantRun) {
+                    // 이미 열린 카메라 핸들이 남아 있는 경우: 닫고 잠시 후 다시 연다
+                    occupiedRetries++
+                    sendStatus("카메라가 사용 중이라 다시 여는 중… (${occupiedRetries}/2)")
+                    safe { helper?.closeCamera() }
+                    main.postDelayed({ if (wantRun) openCameraOnce() }, 700L * occupiedRetries)
+                } else {
+                    state = "error"
+                    val hint = if (text.contains("occupied", ignoreCase = true))
+                        " — 다른 앱이 USB 카메라를 잡고 있습니다. 설정 → 애플리케이션 → (USB Camera 등) → '강제 중지' 후, 카메라를 뽑았다 다시 꽂고 시작하세요."
+                    else ""
+                    sendStatus("카메라 오류: $text$hint")
+                }
             }
         }
         when (method.name) { // Object 기본 메서드

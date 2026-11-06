@@ -11,8 +11,8 @@ android {
         applicationId = "com.psg.screengolf"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.2"
+        versionCode = 3
+        versionName = "0.2.1"
         ndk {
             // UVC 드라이버(네이티브 라이브러리) 대상 CPU
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
