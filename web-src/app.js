@@ -5,17 +5,18 @@
   const YD = 0.9144;
 
   // ---------- 설정 ----------
-  const SKEYS = ['sHand', 'sSpinMode', 'sDist', 'sDir', 'sThr', 'sDiff', 'sDepth', 'sProc', 'sTsFix', 'sCal', 'sDefSpin', 'sSurf', 'sWind', 'sWindDir', 'sAlt', 'sTemp', 'sUnit'];
+  const SKEYS = ['sClub', 'sCamMode', 'sPhi', 'sPitch', 'sRoll', 'sCalM', 'sHand', 'sSpinMode', 'sDist', 'sDir', 'sThr', 'sDiff', 'sDepth', 'sProc', 'sTsFix', 'sCal', 'sDefSpin', 'sSurf', 'sWind', 'sWindDir', 'sAlt', 'sTemp', 'sUnit'];
   try { const saved = JSON.parse(localStorage.getItem('psg-settings') || '{}'); for (const k of SKEYS) if (saved[k] != null) $(k).value = saved[k]; } catch (e) { }
   const S = () => ({
-    hand: $('sHand').value, spinMode: $('sSpinMode').value,
+    hand: $('sHand').value, spinMode: $('sSpinMode').value, club: $('sClub').value,
+    camMode: $('sCamMode').value, phi: +$('sPhi').value || 0, pitch: +$('sPitch').value || 0, roll: +$('sRoll').value || 0, calM: $('sCalM').value,
     dist: +$('sDist').value || 1, dir: $('sDir').value, thr: +$('sThr').value || 0, diff: +$('sDiff').value || 30,
     depth: $('sDepth').value === '1', proc: +$('sProc').value, cal: +$('sCal').value || 1, defSpin: +$('sDefSpin').value || 0,
     surf: $('sSurf').value, wind: +$('sWind').value || 0, windDir: +$('sWindDir').value, alt: +$('sAlt').value || 0, temp: +$('sTemp').value, unit: $('sUnit').value,
   });
   for (const k of SKEYS) $(k).addEventListener('change', () => {
     try { const o = {}; for (const kk of SKEYS) o[kk] = $(kk).value; localStorage.setItem('psg-settings', JSON.stringify(o)); } catch (e) { }
-    detOpts(); renderStats(); draw();
+    detOpts(); renderStats(); draw(); if ($('poseInfo')) $('poseInfo').textContent = poseText();
   });
   const dist = m => { const s = S(); return s.unit === 'yd' ? (m / YD) : m; };
   const du = () => S().unit === 'yd' ? 'yd' : 'm';
@@ -46,6 +47,16 @@
     return v;
   };
 
+  // ---------- 클럽 ----------
+  const CLUBS = {
+    driver: { name: '드라이버', spin: 2700, maxRpm: 6000 },
+    wood3: { name: '3번 우드', spin: 3600, maxRpm: 7000 },
+    iron7: { name: '7번 아이언', spin: 7000, maxRpm: 10000 },
+    pw: { name: '피칭웨지', spin: 9000, maxRpm: 12000 },
+  };
+  // 자동: 티 위 공 → 드라이버, 지면에 놓인 공 → 7번 아이언
+  const clubFor = onTee => { const c = S().club; return c === 'auto' ? (onTee ? 'driver' : 'iron7') : c; };
+
   function launch(L, src, extra = {}) {
     const res = Golf.simulate(L, envOpts());
     const shot = { id: shots.length + 1, src, L, res, extra, time: new Date() };
@@ -64,14 +75,17 @@
     if (sh.spin && sh.spinFrom === 'texture') { spin = sh.spin; spinNote = `딤플/표면 무늬 · 신뢰도 ${(sh.spinConf * 100).toFixed(0)}% · ${sh.texPairs}쌍`; }
     else if (sh.spin) { spin = sh.spin; spinNote = `마커 ${sh.spinPairs}쌍`; }
     else {
-      const b = s.defSpin > 0 ? s.defSpin : estSpin(sh.speed * s.cal, sh.vla); spin = [b, 0, 0];
+      const club = CLUBS[clubFor(sh.onTee)];
+      const b = s.defSpin > 0 ? s.defSpin : club.spin * Math.min(1.15, Math.max(0.5, estSpin(sh.speed * s.cal, sh.vla) / estSpin(club === CLUBS.driver ? 70 : 54, club === CLUBS.driver ? 11 : 16.3)));
+      spin = [b, 0, 0];
       spinNote = '측정 실패 → 백스핀 추정·사이드 0 (구질은 출발 방향만 반영)';
       const fps = sh.frames > 1 && sh.dtTot > 0 ? (sh.frames - 1) / sh.dtTot : 0;
       if (fps) spinNote += ` · ${fps.toFixed(0)}fps에서는 약 ${(75 / 360 * 60 * fps).toFixed(0)}rpm 이하만 측정 가능`;
     }
     const L = { speed: sh.speed * s.cal, vla: sh.vla, hla: sh.hla, spin };
-    launch(L, src, { spinNote, frames: sh.frames, spinFrom: sh.spin ? sh.spinFrom : 'est' });
-    chip(`${src} 샷 · ${sh.frames}프레임 · 스핀 ${spinNote}`, 'ok');
+    const club = clubFor(sh.onTee);
+    launch(L, src, { spinNote, frames: sh.frames, spinFrom: sh.spin ? sh.spinFrom : 'est', club, onTee: sh.onTee, posed: sh.posed });
+    chip(`${src} 샷 · ${CLUBS[club].name}${S().club === 'auto' ? (sh.onTee ? '(티 감지)' : '(지면 공)') : ''} · ${sh.frames}프레임 · 스핀 ${spinNote}`, 'ok');
   }
 
   // ---------- 구질 판정 ----------
@@ -120,7 +134,7 @@
     if (r) {
       const ob = isOB(r);
       if (!anim) { $('hudK').innerHTML = `캐리 · <b style="color:${shp.color}">${shp.name}</b>`; $('hudCarry').textContent = `${fmt(dist(r.carry))} ${U}`; }
-      $('hudSub').innerHTML = `토탈 ${fmt(dist(r.total))} ${U} · 체공 ${fmt(r.flightTime)}s${ob ? ' · <span style="color:var(--bad)">OB</span>' : ''}<br><span class="k">${cur.src}${cur.extra.spinNote ? ' · 스핀 ' + cur.extra.spinNote : ''}</span>`;
+      $('hudSub').innerHTML = `토탈 ${fmt(dist(r.total))} ${U} · 체공 ${fmt(r.flightTime)}s${ob ? ' · <span style="color:var(--bad)">OB</span>' : ''}<br><span class="k">${cur.extra.club ? CLUBS[cur.extra.club].name + ' · ' : ''}${cur.src}${cur.extra.spinNote ? ' · 스핀 ' + cur.extra.spinNote : ''}</span>`;
     }
   }
   const isOB = r => Math.abs(r.final[0]) > FIELD.w / 2 || r.final[1] > FIELD.l || r.final[1] < 0 || Math.abs(r.landing[0]) > FIELD.w / 2 || r.landing[1] > FIELD.l;
@@ -128,7 +142,7 @@
   function renderHist() {
     $('hBody').innerHTML = shots.slice().reverse().map(s => {
       const sp = Golf.describeSpin(s.L.spin);
-      return `<tr data-id="${s.id}" class="${s === cur ? 'sel' : ''}"><td>${s.id}</td><td>${s.src}</td><td>${fmt(s.L.speed)}</td><td>${fmt(s.L.vla)}</td><td>${fmt(sp.back, 0)}/${fmt(sp.side, 0)}</td><td>${fmt(dist(s.res.carry))}</td><td>${fmt(dist(s.res.total))}${isOB(s.res) ? '<br><span style="color:var(--bad)">OB</span>' : ''}</td><td>${fmt(dist(s.res.totalX))}</td><td style="color:${shotShape(s).color}">${shotShape(s).name}</td></tr>`;
+      return `<tr data-id="${s.id}" class="${s === cur ? 'sel' : ''}"><td>${s.id}</td><td>${s.src}${s.extra.club ? '<br>' + CLUBS[s.extra.club].name : ''}</td><td>${fmt(s.L.speed)}</td><td>${fmt(s.L.vla)}</td><td>${fmt(sp.back, 0)}/${fmt(sp.side, 0)}</td><td>${fmt(dist(s.res.carry))}</td><td>${fmt(dist(s.res.total))}${isOB(s.res) ? '<br><span style="color:var(--bad)">OB</span>' : ''}</td><td>${fmt(dist(s.res.totalX))}</td><td style="color:${shotShape(s).color}">${shotShape(s).name}</td></tr>`;
     }).join('');
     $('hBody').querySelectorAll('tr').forEach(tr => tr.onclick = () => { cur = shots.find(s => s.id == tr.dataset.id); renderStats(); renderHist(); startAnim(); });
   }
@@ -414,10 +428,25 @@
     };
   }
   function detOpts(det) {
-    const s = S(), o = { camDist: s.dist, dir: s.dir, thr: s.thr, diffThr: s.diff, useDepth: s.depth, spinMode: s.spinMode };
+    const s = S(), o = { camDist: s.dist, dir: s.dir, thr: s.thr, diffThr: s.diff, useDepth: s.depth, spinMode: s.spinMode, camM: camMatrix() };
+    o.clubMax = s.club === 'auto' ? { tee: CLUBS.driver.maxRpm, ground: CLUBS.iron7.maxRpm } : { tee: CLUBS[s.club].maxRpm, ground: CLUBS[s.club].maxRpm };
     if (det) det.set(o); else { camDet?.set(o); vidDet?.set(o); }
     return o;
   }
+  // 카메라 자세: 측면 자동(null) / 두 공 보정값 / 직접 입력(방위·숙임·기울기)
+  function camMatrix() {
+    const s = S();
+    if (s.camMode === 'calib') { try { const M = JSON.parse(s.calM); if (Array.isArray(M) && M.length === 3) return M; } catch (e) { } return null; }
+    if (s.camMode === 'manual') return Detector.camPose(s.phi, s.pitch, s.roll);
+    return null;
+  }
+  function poseText() {
+    const s = S();
+    if (s.camMode === 'calib') { const M = camMatrix(); if (!M) return '보정값 없음 → 측면 자동'; const z = [M[0][2], M[1][2], M[2][2]]; return `보정됨: 방위 ${(Math.atan2(z[0], z[1]) * 180 / Math.PI).toFixed(0)}°, 숙임 ${(-Math.asin(z[2]) * 180 / Math.PI).toFixed(0)}°`; }
+    if (s.camMode === 'manual') return `직접 입력: 방위 ${s.phi}°, 숙임 ${s.pitch}°, 기울기 ${s.roll}°`;
+    return '측면 자동 (공이 화면 가로로 지나가는 위치)';
+  }
+
   function overlay(cnv, proc, out, msgEl) {
     const c = cnv.getContext('2d');
     if (cnv.width !== proc.c.width || cnv.height !== proc.c.height) { cnv.width = proc.c.width; cnv.height = proc.c.height; }
@@ -426,10 +455,13 @@
     if (out.cand && out.state === 'search') { c.strokeStyle = '#ffe45c'; c.beginPath(); c.arc(out.cand.cx, out.cand.cy, out.cand.r + 3, 0, 7); c.stroke(); }
     if (out.rest) { c.strokeStyle = out.state === 'ready' ? '#5fd39a' : 'rgba(95,211,154,.5)'; c.beginPath(); c.arc(out.rest.cx, out.rest.cy, out.rest.r + 4, 0, 7); c.stroke(); }
     for (const p of out.track || []) { c.strokeStyle = p.mk ? '#ff6b6b' : '#ffb454'; c.beginPath(); c.arc(p.u, p.v, p.r, 0, 7); c.stroke(); }
+    if (CAL.on) for (const [k, p] of CAL.pts.entries()) { c.strokeStyle = '#9fd3ff'; c.lineWidth = 3; c.beginPath(); c.arc(p.cx, p.cy, p.r + 5, 0, 7); c.stroke(); c.fillStyle = '#9fd3ff'; c.font = 'bold 14px sans-serif'; c.fillText(k ? '② 타깃 방향' : '① 타격 위치', p.cx + p.r + 8, p.cy); }
+    if (CAL.pts.length === 2) { c.strokeStyle = '#9fd3ff'; c.setLineDash([6, 5]); c.beginPath(); c.moveTo(CAL.pts[0].cx, CAL.pts[0].cy); c.lineTo(CAL.pts[1].cx, CAL.pts[1].cy); c.stroke(); c.setLineDash([]); }
     c.fillStyle = 'rgba(0,0,0,.55)'; c.fillRect(0, 0, 150, 18); c.fillStyle = '#fff'; c.font = '11px monospace';
     c.fillText(`${out.state} thr=${out.thr | 0}`, 4, 13);
     if (msgEl) {
       let m = out.msg;
+      if (out.state === 'ready' && out.rest) m += ` → ${CLUBS[clubFor(out.rest.onTee)].name}`;
       if (out.rest && out.rest.r < 30) m += ` · 공 지름 ${(out.rest.r * 2).toFixed(0)}px: 딤플 스핀에는 작습니다(60px 이상 권장 — 카메라를 가까이)`;
       msgEl.textContent = m;
     }
@@ -485,7 +517,8 @@
     let lastT = -1, n = 0, tf = performance.now();
     const handle = (src, sw, sh, t) => {
       if (t <= lastT) return; lastT = t;
-      const f = camProc.grab(src, sw, sh); f.t = t;
+      const f = camProc.grab(src, sw, sh); f.t = t; camLast = f;
+      if (CAL.on) { overlay($('preview'), camProc, { state: '보정', track: [], thr: 0, msg: CAL.msg }, $('camMsg')); return; }
       const out = camDet.process(f);
       n++;
       if (n % 2 === 0 || out.state === 'track') overlay($('preview'), camProc, out, $('camMsg'));
@@ -512,10 +545,47 @@
   function stopCam() { if (NATIVE.run) { NATIVE.send({ cmd: 'stop' }); NATIVE.run = false; } camRun = false; camStream?.getTracks().forEach(t => t.stop()); camStream = null; $('camStart').textContent = '카메라 시작'; chip('대기'); }
   $('camReset').onclick = () => { if (camDet) { camDet.seed = null; camDet.reset(); } };
   $('preview').addEventListener('click', e => {
-    if (!camDet) return;
     const r = e.target.getBoundingClientRect();
-    camDet.setSeed((e.clientX - r.left) / r.width * e.target.width, (e.clientY - r.top) / r.height * e.target.height);
+    const u = (e.clientX - r.left) / r.width * e.target.width, v = (e.clientY - r.top) / r.height * e.target.height;
+    if (CAL.on) return calTap(u, v);
+    if (!camDet) return;
+    camDet.setSeed(u, v);
   });
+
+  // ---------- 카메라 각도 보정 (두 공) ----------
+  // ① 타격 위치의 공, ② 타깃 방향으로 1~2m 앞에 놓은 공(둘 다 바닥에)을 차례로 탭 → 두 공의 3D 위치로 타깃 방향·카메라 숙임 계산
+  let camLast = null;
+  const CAL = { on: false, pts: [], msg: '' };
+  function calStart() {
+    if (!camRun || !camLast) { camWarn('카메라를 먼저 시작하세요.'); return; }
+    CAL.on = true; CAL.pts = []; CAL.msg = '① 타격 위치(티 자리)에 놓은 공을 탭하세요';
+    $('calBtn').textContent = '보정 취소'; $('camMsg').textContent = CAL.msg;
+  }
+  function calEnd(msg) { CAL.on = false; $('calBtn').textContent = '📐 카메라 각도 보정'; if (msg) $('camMsg').textContent = msg; if (camDet) { camDet.seed = null; camDet.reset(); } }
+  function calTap(u, v) {
+    const f = camLast; if (!f) return;
+    // 탭한 곳 근처의 공을 정지 공 찾기와 같은 방식으로 정밀 검출
+    const d = new Detector.ShotDetector({}); detOpts(d);
+    d.setSeed(u, v);
+    let ball = null;
+    for (let k = 0; k < 2 && !ball; k++) { const o = d.process(f); ball = o.cand; }
+    if (!ball) { CAL.msg = '그 위치에서 공을 찾지 못했습니다. 공 한가운데를 다시 탭하세요'; $('camMsg').textContent = CAL.msg; return; }
+    CAL.pts.push({ cx: ball.cx, cy: ball.cy, r: ball.r, edge: !!ball.edge });
+    if (CAL.pts.length === 1) { CAL.msg = '② 타깃 방향으로 1~2m 앞(같은 높이·바닥)에 놓은 두 번째 공을 탭하세요'; $('camMsg').textContent = CAL.msg; return; }
+    // 두 공 3D 위치: 거리 설정(카메라↔① 공)으로 초점거리를 구하고, 공 크기로 깊이 계산
+    const [a, b] = CAL.pts, s = S(), D0 = 0.04267, pu = f.w / 2, pv = f.h / 2;
+    let fpx = 2 * a.r * s.dist / D0;
+    for (let k = 0; k < 4; k++) { const q = Math.hypot(a.cx - pu, a.cy - pv) / fpx; fpx = 2 * a.r * s.dist / Math.sqrt(1 + q * q) / D0; }
+    const P = p => { const Z = fpx * D0 / (2 * p.r); return [(p.cx - pu) / fpx * Z, (p.cy - pv) / fpx * Z, Z]; };
+    const pose = Detector.poseFromTwo(P(a), P(b), s.pitch);
+    $('sCalM').value = JSON.stringify(pose.M.map(r => r.map(x => +x.toFixed(5))));
+    $('sCamMode').value = 'calib';
+    $('sCalM').dispatchEvent(new Event('change')); $('sCamMode').dispatchEvent(new Event('change'));
+    CAL.pts = [];
+    calEnd(`보정 완료 — 카메라 방위 ${pose.phi.toFixed(0)}° (−90=측면·0=후방), 숙임 ${pose.pitch.toFixed(0)}°. 두 번째 공을 치우고 시작하세요.`);
+    $('poseInfo').textContent = poseText();
+  }
+  $('calBtn').onclick = () => CAL.on ? calEnd('보정을 취소했습니다') : calStart();
   if (navigator.mediaDevices?.enumerateDevices) listCams();
 
   // ---------- 안드로이드 앱(USB/UVC 네이티브 드라이버) 브리지 ----------
@@ -577,6 +647,8 @@
     if (buf.byteLength < 12 + w * h) return;
     const gray = new Uint8Array(buf, 12, w * h);
     const t = $('sTsFix').value === '1' ? smoothT(tNs / 1e9) : tNs / 1e9;
+    camLast = { gray, w, h, t };
+    if (CAL.on) { camProc.put(gray, w, h); overlay($('preview'), camProc, { state: '보정', track: [], thr: 0, msg: CAL.msg }, $('camMsg')); return; }
     const out = camDet.process({ gray, w, h, t });
     NATIVE.n++;
     if (NATIVE.n % 2 === 0 || out.state === 'track') { camProc.put(gray, w, h); overlay($('preview'), camProc, out, $('camMsg')); }
@@ -628,6 +700,14 @@
     vEl.requestVideoFrameCallback(cb);
     try { await vEl.play(); } catch (e) { $('vmsg').textContent = '재생 실패: ' + e.message; vRun = false; }
   };
+
+  // 카메라 위치 프리셋(직접 입력)
+  document.querySelectorAll('[data-pose]').forEach(b => b.onclick = () => {
+    const [phi, pitch] = b.dataset.pose.split(',').map(Number);
+    $('sPhi').value = phi; $('sPitch').value = pitch; $('sRoll').value = 0; $('sCamMode').value = 'manual';
+    $('sCamMode').dispatchEvent(new Event('change'));
+  });
+  $('poseInfo').textContent = poseText();
 
   // ---------- 시작 ----------
   renderStats(); renderHist();

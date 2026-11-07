@@ -99,12 +99,13 @@ const Detector = (() => {
     constructor(opts = {}) {
       this.o = Object.assign({
         ballD: 0.04267, camDist: 1.0, dir: 'auto', thr: 0, diffThr: 30,
-        stableFrames: 8, maxTrackTime: 0.3, useDepth: true, maxHla: 25, spinMode: 'auto', maxRpm: 12000,
+        stableFrames: 8, maxTrackTime: 0.3, useDepth: true, maxHla: 35, spinMode: 'auto', maxRpm: 12000,
+        camM: null, // 카메라 자세(월드←카메라 3x3). null이면 '측면 수직' 가정(공 진행 방향으로 자동 판별)
       }, opts);
       this.reset();
     }
     set(opts) { Object.assign(this.o, opts); }
-    reset() { this.state = 'search'; this.stable = 0; this.rest = null; this.cand = null; this.track = []; this.seed = this.seed || null; this.lastShot = null; this.msg = '공을 찾는 중…'; }
+    reset() { this.state = 'search'; this.stable = 0; this.anchor = null; this.hits = []; this.misses = 0; this.rest = null; this.cand = null; this.track = []; this.seed = this.seed || null; this.lastShot = null; this.msg = '공을 찾는 중…'; }
     setSeed(u, v) { this.seed = { u, v }; this.reset(); }
 
     threshold(gray) {
@@ -114,7 +115,7 @@ const Detector = (() => {
       const pct = q => { let acc = 0; const target = gray.length * q; for (let i = 0; i < 256; i++) { acc += hist[i]; if (acc >= target) return i; } return 255; };
       // 배경(중앙값)과 가장 밝은 부분(상위 0.5%)의 중간쯤: 한쪽에서 비추는 조명으로 공 일부가 어두워도 원형을 유지
       const med = pct(0.5), hi = pct(0.995);
-      this.bgMed = med;
+      this.bgMed = med; this.hiLvl = hi;
       return Math.max(med + 25, Math.min(235, med + 0.42 * (hi - med)));
     }
 
@@ -161,39 +162,124 @@ const Detector = (() => {
       return { c, d, n: pts.length };
     }
 
-    detectMoving(f, thr) {
-      const { gray, w, h } = f, ref = this.ref;
-      const mask = new Uint8Array(w * h);
-      for (let i = 0; i < w * h; i++) mask[i] = (gray[i] > thr * 0.85 && Math.abs(gray[i] - ref[i]) > this.o.diffThr) ? 1 : 0;
-      this.closeMask(mask, w, h, Math.max(1, Math.round(this.rest.r * 0.3)));
-      const r0 = this.rest.r, a0 = Math.PI * r0 * r0;
-      const bs = blobs(mask, w, h, Math.max(4, a0 * 0.12)).filter(b => b.n < a0 * 8 && b.r > r0 * 0.35 && b.r < r0 * 2.2 &&
-        Math.hypot(b.cx - this.rest.cx, b.cy - this.rest.cy) > r0 * 1.2 &&
-        b.minx > 1 && b.miny > 1 && b.maxx < w - 2 && b.maxy < h - 2); // 화면 경계에 걸친 공은 크기 왜곡
-      if (!bs.length) return null;
+    // 창 안의 밝은 둥근 덩어리 중 (cx,cy)에 가장 가까운 것
+    localBall(f, thr, cx, cy, R) {
+      const { gray, w, h } = f;
+      const x0 = Math.max(0, Math.floor(cx - R)), x1 = Math.min(w - 1, Math.ceil(cx + R));
+      const y0 = Math.max(0, Math.floor(cy - R)), y1 = Math.min(h - 1, Math.ceil(cy + R));
+      const LW = x1 - x0 + 1, LH = y1 - y0 + 1;
+      if (LW < 4 || LH < 4) return null;
+      const m = new Uint8Array(LW * LH);
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) m[(y - y0) * LW + x - x0] = gray[y * w + x] > thr * 0.85 ? 1 : 0;
+      this.closeMask(m, LW, LH, Math.max(1, Math.round(this.rest.r * 0.3)));
       let best = null, bd = Infinity;
-      const last = this.track[this.track.length - 1];
-      for (const b of bs) {
+      for (const b0 of blobs(m, LW, LH, 4)) {
+        const b = Object.assign({}, b0, { cx: b0.cx + x0, cy: b0.cy + y0, minx: b0.minx + x0, maxx: b0.maxx + x0, miny: b0.miny + y0, maxy: b0.maxy + y0 });
+        if (b.l2 / b.l1 < 0.35) continue;
+        const d = Math.hypot(b.cx - cx, b.cy - cy);
+        if (d < bd) { bd = d; best = b; }
+      }
+      return best ? this.refine(f, best, false) : null;
+    }
+
+    // 날아가는 공 찾기: 밝기 기준(기준영상 차이만 쓰면, 후방 촬영에서 제자리에서 작아지는 공이 지워짐)
+    detectMoving(f, thr) {
+      const { gray, w, h } = f, ref = this.ref, r0 = this.rest.r, a0 = Math.PI * r0 * r0;
+      const mask = new Uint8Array(w * h);
+      // 기준영상(공이 놓여 있던 장면)과 달라진 픽셀 = 움직이는 것. 밝기 임계만 쓰면 하늘처럼 밝은 배경이 통째로 잡힘
+      const dth = Math.max(12, this.o.diffThr * 0.6);
+      for (let i = 0; i < w * h; i++) mask[i] = Math.abs(gray[i] - ref[i]) > dth ? 1 : 0;
+      const cands = [];
+      let cs = 0, cn = 0;
+      for (let y = Math.ceil(this.rest.cy - r0 * 0.35); y <= this.rest.cy + r0 * 0.35; y++) for (let x = Math.ceil(this.rest.cx - r0 * 0.35); x <= this.rest.cx + r0 * 0.35; x++) {
+        if (x < 0 || y < 0 || x >= w || y >= h) continue; const i = y * w + x; cs += Math.abs(gray[i] - ref[i]); cn++;
+      }
+      const holeGone = cn > 0 && cs / cn > this.o.diffThr * 0.8;
+      // 공이 떠난 빈자리는 '바뀐 픽셀'로 잡히므로 지운다(안 지우면 가까이 있는 날아가는 공과 합쳐짐 — 후방 촬영)
+      const RR = r0 * 1.06;
+      if (holeGone) for (let y = Math.max(0, Math.floor(this.rest.cy - RR)); y <= Math.min(h - 1, this.rest.cy + RR); y++) for (let x = Math.max(0, Math.floor(this.rest.cx - RR)); x <= Math.min(w - 1, this.rest.cx + RR); x++)
+        if ((x - this.rest.cx) ** 2 + (y - this.rest.cy) ** 2 <= RR * RR) mask[y * w + x] = 0;
+      this.closeMask(mask, w, h, Math.max(1, Math.round(r0 * 0.3)));
+      for (const b0 of blobs(mask, w, h, Math.max(4, a0 * 0.02))) {
+        if (b0.n > a0 * 8) continue;
+        // 움직이지 않는 밝은 물체(구름·바닥 표식 등) 제외: 기준영상과 거의 같으면 정지물
+        let dsum = 0, dn = 0;
+        const rr0 = Math.max(b0.r, (b0.maxx - b0.minx) / 2, (b0.maxy - b0.miny) / 2), sx = Math.max(1, Math.round(rr0 / 6));
+        for (let y = b0.miny; y <= b0.maxy; y += sx) for (let x = b0.minx; x <= b0.maxx; x += sx) {
+          const i = y * w + x; if (!mask[i]) continue; dsum += Math.abs(gray[i] - ref[i]); dn++;
+        }
+        const md = dn ? dsum / dn : 0;
+        const nearRest0 = Math.hypot(b0.cx - this.rest.cx, b0.cy - this.rest.cy) < r0 * 1.6;
+        if (md < this.o.diffThr * 0.5 && !nearRest0) continue;
+        // 정밀화(역광·한쪽 조명이면 가장자리 원 맞춤) 후 형태 검사
+        // 원래 자리에서 떨어진 공은 '바뀐 픽셀' 실루엣으로, 제자리 근처(후방 촬영 등)는 밝기/가장자리로 정밀화
+        const touchRest = Math.hypot(Math.max(b0.minx - this.rest.cx, 0, this.rest.cx - b0.maxx), Math.max(b0.miny - this.rest.cy, 0, this.rest.cy - b0.maxy)) < r0 * 1.1;
+        // 빈자리와 맞닿은 후보는 실루엣이 잘려 있으므로 원본 밝기 영상의 가장자리로 원 맞춤
+        const b = !touchRest ? this.refine(f, b0, 'diff') : (this.edgeFit(f, b0) || this.refine(f, b0, false));
+        if (b.r < r0 * 0.25 || b.r > r0 * 2.5) continue;
+        if (b.minx <= 1 || b.miny <= 1 || b.maxx >= w - 2 || b.maxy >= h - 2) continue; // 화면 경계에 걸친 공은 크기 왜곡
+        if (!b.edge && b.l2 / b.l1 < 0.12) continue; // 티·막대처럼 가는 물체 제외 (모션블러 공은 허용)
+        { const rr = Math.max(b.r, (this.track.length ? this.track[this.track.length - 1].r * 0.95 : 0)); if (b.cx - rr < 3 || b.cy - rr < 3 || b.cx + rr > w - 3 || b.cy + rr > h - 3) continue; } // 화면 밖으로 잘린 공 제외
+        const nearRest = Math.hypot(b.cx - this.rest.cx, b.cy - this.rest.cy) < r0 * 1.5;
+        const changed = Math.hypot(b.cx - this.rest.cx, b.cy - this.rest.cy) > r0 * 0.3 || Math.abs(b.r / r0 - 1) > 0.06;
+        if (nearRest && !changed) continue; // 아직 그 자리에 있는 공
+        // 공이 떠난 '빈자리'(배경이 드러나 기준영상과 달라진 원) 제외: 원래 자리 중심부가 크게 바뀌었으면
+        // 그 근처 후보는 빈자리. 후방 촬영에서 제자리에서 작아지는 공은 중심부가 그대로(공 위에 공)라 통과.
+        if (holeGone && Math.hypot(b.cx - this.rest.cx, b.cy - this.rest.cy) < r0 * 1.1) continue;
+        cands.push(b);
+      }
+      const last = this.track[this.track.length - 1], prev = this.track[this.track.length - 2];
+      if (!cands.length) return null;
+      let best = null, bd = Infinity;
+      for (const b of cands) {
         let d;
-        if (!last) d = Math.hypot(b.cx - this.rest.cx, b.cy - this.rest.cy);
+        if (!last) d = Math.hypot(b.cx - this.rest.cx, b.cy - this.rest.cy) + Math.abs(b.r - r0) * 2;
         else {
-          const prev = this.track[this.track.length - 2];
-          const dt = f.t - last.t;
-          let pu = last.u, pv = last.v;
-          if (prev) { const k = dt / (last.t - prev.t); pu += (last.u - prev.u) * k; pv += (last.v - prev.v) * k; }
-          d = Math.hypot(b.cx - pu, b.cy - pv);
-          // 진행 방향 역행 후보 제외
-          if (this.dirSign && (b.cx - last.u) * this.dirSign < -r0) d = Infinity;
+          let pu = last.u, pv = last.v, pr = last.r;
+          if (prev) { const k = (f.t - last.t) / (last.t - prev.t); pu += (last.u - prev.u) * k; pv += (last.v - prev.v) * k; pr += (last.r - prev.r) * k; }
+          d = Math.hypot(b.cx - pu, b.cy - pv) + Math.abs(b.r - pr) * 2;
+          if (prev) { // 진행 방향이 뒤집히는 후보 제외
+            const du = last.u - prev.u, dv = last.v - prev.v, mv = Math.hypot(du, dv);
+            if (mv > r0 * 0.5 && ((b.cx - last.u) * du + (b.cy - last.v) * dv) / mv < -r0) d = Infinity;
+          }
         }
         if (d < bd) { bd = d; best = b; }
       }
       return best && isFinite(bd) ? best : null;
     }
 
+    // 티 판별: 공 바로 아래(공 반지름의 1~2.2배 구간)에 가늘고 대비가 뚜렷한 세로 줄(티)이 있는지.
+    // 잔디·매트 위 공은 아래가 넓게 균일하거나(매트) 넓게 거칠어(잔디) 가는 줄이 없다.
+    teeCheck(f, rest) {
+      const { gray, w, h } = f, r = rest.r, cx = rest.cx;
+      const ya = Math.round(rest.cy + r * 1.08), yb = Math.min(h - 1, Math.round(rest.cy + r * 2.2));
+      let rows = 0, hits = 0;
+      for (let y = ya; y <= yb; y++) {
+        const xa = Math.max(0, Math.round(cx - r * 1.6)), xb = Math.min(w - 1, Math.round(cx + r * 1.6));
+        if (xb - xa < 8) continue;
+        const row = [];
+        for (let x = xa; x <= xb; x++) row.push(gray[y * w + x]);
+        const sorted = row.slice().sort((p, q) => p - q), med = sorted[sorted.length >> 1];
+        let center = 0, outer = 0, on = 0, wide = 0;
+        for (let x = xa; x <= xb; x++) {
+          const d = Math.abs(gray[y * w + x] - med), ax = Math.abs(x - cx);
+          if (ax < r * 0.35) center = Math.max(center, d);
+          else if (ax > r * 0.7) { outer += d; on++; }
+        }
+        outer /= Math.max(1, on);
+        for (let x = xa; x <= xb; x++) if (Math.abs(x - cx) < r * 0.6 && Math.abs(gray[y * w + x] - med) > center * 0.5) wide++;
+        rows++;
+        if (center > 18 && center > outer * 3 + 6 && wide <= r * 0.5 + 1) hits++;
+      }
+      const score = rows ? hits / rows : 0;
+      return { onTee: rows >= 4 && score > 0.55, score };
+    }
+
     // 공 크기·중심 정밀화: 배경보다 조금만 밝아도 공으로 보고(그늘진 쪽 포함) 모멘트로 원을 다시 구한다.
     // 한쪽 조명으로 공의 밝은 부분만 잡히면 반지름이 작아져 속도가 크게 틀어지기 때문.
     refine(f, b, moving) {
       const { gray, w, h } = f, lo = (this.bgMed ?? 40) + 14, ref = this.ref;
+      const dth = Math.max(12, this.o.diffThr * 0.6);
       const R = Math.max(b.rMaj, b.r) * 1.7 + 2;
       const x0 = Math.max(0, Math.floor(b.cx - R)), x1 = Math.min(w - 1, Math.ceil(b.cx + R));
       const y0 = Math.max(0, Math.floor(b.cy - R)), y1 = Math.min(h - 1, Math.ceil(b.cy + R));
@@ -203,8 +289,11 @@ const Detector = (() => {
       for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
         if ((x - b.cx) ** 2 + (y - b.cy) ** 2 > R * R) continue;
         const i = y * w + x, g = gray[i];
-        if (g <= lo) continue;
-        if (moving && ref && Math.abs(g - ref[i]) < 10) continue;
+        if (moving === 'diff') { if (Math.abs(g - ref[i]) <= dth) continue; } // 날아가는 공: 배경 대비 바뀐 픽셀 = 공 실루엣(밝은 하늘 앞에서도 정확)
+        else {
+          if (g <= lo) continue;
+          if (moving && ref && Math.abs(g - ref[i]) < 10) continue;
+        }
         m[(y - y0) * LW + x - x0] = 1;
       }
       const out = new Uint8Array(LW * LH), st = [];
@@ -224,7 +313,9 @@ const Detector = (() => {
         const x = x0 + (k % LW), y = y0 + ((k / LW) | 0);
         n++; sx += x; sy += y; sxx += x * x; syy += y * y; sxy += x * y; px.push(x, y);
       }
-      if (n < b.n * 0.8) return b;
+      if (n < b.n * 0.8) return this.edgeFit(f, b) || b;
+      // 그늘진 쪽이 배경(하늘 등)보다 어두우면 영역이 배경으로 새어나감 → 가장자리 원 맞춤으로 전환
+      if (n > Math.PI * R * R * 0.8) return this.edgeFit(f, b) || b;
       const cx = sx / n, cy = sy / n;
       const vxx = sxx / n - cx * cx, vyy = syy / n - cy * cy, vxy = sxy / n - cx * cy;
       const tmp = Math.sqrt(((vxx - vyy) / 2) ** 2 + vxy * vxy);
@@ -245,8 +336,89 @@ const Detector = (() => {
           r = d[Math.floor(d.length * 0.95)] / 0.9747 + 0.5;
         }
       }
-      if (r < b.r * 0.9 || r > b.r * 2) return b; // 주변 물체와 섞였으면 원래 값 유지
+      if (r < b.r * 0.9 || r > b.r * 2) return this.edgeFit(f, b) || b; // 주변 물체와 섞임 → 가장자리 원 맞춤
+      // 밝기 영역이 잔디 무늬 등으로 새어 둥글지 않으면 가장자리 원 맞춤 시도 (날아가는 공의 '차이' 실루엣은 번짐 때문에 길쭉할 수 있어 제외)
+      if (moving !== 'diff' && l2 / l1 < 0.6) { const e = this.edgeFit(f, b); if (e) return e; }
       return Object.assign({}, b, { n, cx: ccx, cy: ccy, l1, l2, r, rMaj: 2 * Math.sqrt(l1) });
+    }
+
+    // 가장자리 원 맞춤(실외용): 밝은 부분 중심에서 방사선 64개를 그어 밝기 변화가 큰 점(경계 후보)을 모으고
+    // RANSAC으로 가장 많은 후보를 지나는 원을 찾는다. 햇빛 쪽 경계(강함)만으로도 원이 정해짐.
+    edgeFit(f, b) {
+      const { gray, w, h } = f;
+      const S = (x, y) => { const xi = Math.floor(x), yi = Math.floor(y); if (xi < 0 || yi < 0 || xi >= w - 1 || yi >= h - 1) return NaN; const fx = x - xi, fy = y - yi, i = yi * w + xi; return (gray[i] * (1 - fx) + gray[i + 1] * fx) * (1 - fy) + (gray[i + w] * (1 - fx) + gray[i + w + 1] * fx) * fy; };
+      const rb = Math.max(3, b.r, (b.maxx - b.minx) / 2, (b.maxy - b.miny) / 2), lo = rb * 0.4, hi = rb * 2.6, NR = 64, pts = [];  // 초승달처럼 일부만 밝아도 외접 크기 기준
+      for (let k = 0; k < NR; k++) {
+        const a = k / NR * 2 * Math.PI, ca = Math.cos(a), sa = Math.sin(a);
+        const prof = [];
+        for (let rr = lo; rr <= hi; rr += 0.5) prof.push(S(b.cx + ca * rr, b.cy + sa * rr));
+        let mx = 0; const d = [];
+        for (let i = 2; i < prof.length - 2; i++) { const v = (prof[i + 1] + prof[i + 2] - prof[i - 1] - prof[i - 2]) / 4; d.push(v); if (Math.abs(v) > mx) mx = Math.abs(v); }
+        if (!(mx > 4)) continue;
+        // 바깥쪽으로 갈수록 어두워지는(공→배경) 또는 밝아지는(그늘→하늘) 강한 변화점 상위 3개
+        const c = [];
+        for (let i = 1; i < d.length - 1; i++) if (Math.abs(d[i]) >= Math.abs(d[i - 1]) && Math.abs(d[i]) >= Math.abs(d[i + 1]) && Math.abs(d[i]) > Math.max(6, mx * 0.35)) c.push([Math.abs(d[i]), i]);
+        c.sort((p, q) => q[0] - p[0]);
+        for (const [, i] of c.slice(0, 3)) { const rr = lo + (i + 2) * 0.5; pts.push([b.cx + ca * rr, b.cy + sa * rr, k]); }
+      }
+      if (pts.length < 12) return null;
+      let best = null, bestN = 0, seed = 12345;
+      const rnd = n => (seed = (seed * 16807) % 2147483647) % n;
+      const circ3 = (p, q, r) => {
+        const ax = p[0], ay = p[1], bx = q[0], by = q[1], cx = r[0], cy = r[1];
+        const d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by)); if (Math.abs(d) < 1e-6) return null;
+        const ux = ((ax * ax + ay * ay) * (by - cy) + (bx * bx + by * by) * (cy - ay) + (cx * cx + cy * cy) * (ay - by)) / d;
+        const uy = ((ax * ax + ay * ay) * (cx - bx) + (bx * bx + by * by) * (ax - cx) + (cx * cx + cy * cy) * (bx - ax)) / d;
+        return { cx: ux, cy: uy, r: Math.hypot(ax - ux, ay - uy) };
+      };
+      for (let it = 0; it < 300; it++) {
+        const c = circ3(pts[rnd(pts.length)], pts[rnd(pts.length)], pts[rnd(pts.length)]);
+        if (!c || c.r < rb * 0.8 || c.r > rb * 2.4) continue;
+        if (Math.hypot(c.cx - b.cx, c.cy - b.cy) > c.r * 0.8) continue; // 밝은 부분이 원 안쪽에 있어야
+        const seen = new Set(); let n = 0;
+        for (const p of pts) if (!seen.has(p[2]) && Math.abs(Math.hypot(p[0] - c.cx, p[1] - c.cy) - c.r) < 1.0) { seen.add(p[2]); n++; }
+        if (n > bestN) { bestN = n; best = c; }
+      }
+      if (!best || bestN < NR * 0.28) return null;
+      // 2단계: 찾은 원의 중심에서 다시 방사선을 그어 [0.75r, 1.3r]에서 가장 강한 경계 하나씩 → 최소제곱 원, 2회 반복
+      let c = best, support = bestN / NR;
+      for (let pass = 0; pass < 4; pass++) {
+        const ep = [];
+        for (let k = 0; k < NR; k++) {
+          const a = k / NR * 2 * Math.PI, ca = Math.cos(a), sa = Math.sin(a);
+          const tx = -sa, ty = ca; // 접선 방향 3점 평균
+          const I = (rr) => { let v = 0; for (let t = -1; t <= 1; t++) v += S(c.cx + ca * rr + tx * t, c.cy + sa * rr + ty * t); return v / 3; };
+          // 바깥 배경(1.35r~1.7r)의 평균·흔들림을 재고, 바깥에서 안쪽으로 오며 배경과 확실히 달라지는 첫 지점 = 공 윤곽
+          let m = 0, m2 = 0, nb = 0;
+          for (let rr = c.r * 1.35; rr <= c.r * 1.7; rr += 0.5) { const v = I(rr); if (v === v) { m += v; m2 += v * v; nb++; } }
+          if (nb < 4) continue;
+          m /= nb; const sd = Math.sqrt(Math.max(0, m2 / nb - m * m));
+          const th = Math.max(14, sd * 3);
+          let bm = 0, br = 0;
+          for (let rr = c.r * 1.3; rr >= c.r * 0.75; rr -= 0.25) {
+            const v1 = I(rr), v2 = I(rr - 0.75);
+            if (Math.abs(v1 - m) > th && Math.abs(v2 - m) > th) { br = rr + 0.25; bm = Math.abs(v2 - m) / (sd + 1); break; }
+          }
+          if (bm > 0) ep.push([c.cx + ca * br, c.cy + sa * br, bm]);
+        }
+        if (ep.length < NR * 0.4) break;
+        // 원에서 많이 벗어난 점(잔디 무늬 등) 제외 후 적합
+        const dev = ep.map(p => Math.abs(Math.hypot(p[0] - c.cx, p[1] - c.cy) - c.r)).sort((x, y) => x - y);
+        const tol = Math.max(1, dev[Math.floor(dev.length * 0.6)] * 2);
+        const smax = Math.max(...ep.map(p => p[2]));
+        // 강한 경계(햇빛 쪽·하늘 쪽 윤곽)만으로 맞춤 — 반원만 있어도 원은 잘 정해짐
+        const keep = ep.filter(p => p[2] >= Math.min(3, smax * 0.3) && Math.abs(Math.hypot(p[0] - c.cx, p[1] - c.cy) - c.r) <= tol).map(p => [p[0], p[1]]);
+        const c2 = keep.length >= 10 ? fitCircle(keep) : null;
+        support = keep.length / NR;
+        if (!c2 || c2.r < rb * 0.7 || c2.r > rb * 2.6) break;
+        c = c2;
+      }
+      // 공 검증: 밝은 부분이 원 밖으로 삐져나오지 않고(구름 등 긴 물체 제외),
+      // 원 지름의 2/3 이상을 차지해야(밝은 덩어리보다 훨씬 큰 원을 억지로 맞춘 경우 제외)
+      const maxDim = Math.max(b.maxx - b.minx, b.maxy - b.miny) + 1;
+      if (maxDim > c.r * 2 + 3 || maxDim < c.r * 1.33) return null;
+      if (support < 0.3) return null;
+      return Object.assign({}, b, { cx: c.cx, cy: c.cy, r: c.r, rMaj: c.r, l1: c.r * c.r / 4, l2: c.r * c.r / 4, n: Math.round(Math.PI * c.r * c.r), edge: true, q: support });
     }
 
     // 흰 공 내부 마커(어두운 선) 때문에 생기는 구멍을 메움: 3x3 팽창 후 침식
@@ -274,28 +446,66 @@ const Detector = (() => {
       let shot = null;
 
       if (this.state === 'search') {
-        const mask = new Uint8Array(w * h);
-        for (let i = 0; i < w * h; i++) mask[i] = gray[i] > thr ? 1 : 0;
-        this.closeMask(mask, w, h, this.cand ? Math.max(2, Math.round(this.cand.r * 0.4)) : Math.max(2, Math.round(w / 100))); // 마커 띠로 둘로 갈라진 공도 하나로
-        // 한쪽 조명이면 밝은 쪽만 초승달처럼 잡히므로, 먼저 정밀화(그늘 포함)한 뒤 원형인지 검사
-        const bs = blobs(mask, w, h, 10).filter(b => b.n < w * h * 0.2).map(b => this.refine(f, b, false)).filter(b => b.l2 / b.l1 > 0.55 && discFill(b) > 0.6 && discFill(b) < 1.35);
+        // 임계값 두 단계로 후보 수집: 기본값 + (밝은 하늘·구름이 기본값 근처일 때를 위한) 가장 밝은 부분 기준 높은 값
+        const thrs = [thr];
+        { const T2 = Math.max(this.hiLvl - 55, thr + 0.35 * (this.hiLvl - thr)); if (T2 > thr + 4) thrs.push(T2); }
+        const bs = [];
+        for (const T of thrs) {
+          const mask = new Uint8Array(w * h);
+          for (let i = 0; i < w * h; i++) mask[i] = gray[i] > T ? 1 : 0;
+          this.closeMask(mask, w, h, this.cand ? Math.max(2, Math.round(this.cand.r * 0.4)) : Math.max(2, Math.round(w / 100))); // 마커 띠로 둘로 갈라진 공도 하나로
+          // 실외: 하늘·구름·반사 등 밝은 덩어리가 많으므로 '가장 큰 것' 대신 둥근 정도·화면 경계·이전 위치로 점수화
+          for (const b of blobs(mask, w, h, 10)) {
+            if (!(b.n < w * h * 0.08 && b.minx > 2 && b.miny > 2 && b.maxx < w - 3 && b.maxy < h - 3)) continue;
+            const r = this.refine(f, b, false);
+            if (!(r.l2 / r.l1 > 0.6 && discFill(r) > 0.7 && discFill(r) < 1.3 && r.r >= 4 && r.r < h / 4)) continue;
+            if (bs.some(q => Math.hypot(q.cx - r.cx, q.cy - r.cy) < q.r * 0.5)) continue; // 같은 공 중복
+            bs.push(r);
+          }
+        }
         let best = null;
         if (this.seed) { let bd = Infinity; for (const b of bs) { const d = Math.hypot(b.cx - this.seed.u, b.cy - this.seed.v); if (d < bd && d < Math.max(30, b.r * 4)) { bd = d; best = b; } } }
-        else for (const b of bs) if (!best || b.n > best.n) best = b;
-        if (best && this.cand && Math.hypot(best.cx - this.cand.cx, best.cy - this.cand.cy) < Math.max(1.5, best.r * 0.2) && Math.abs(best.r - this.cand.r) < Math.max(1, best.r * 0.15)) this.stable++;
-        else this.stable = 0;
+        else {
+          let bsc = -1;
+          const prev = this.lastRest;
+          for (const b of bs) {
+            const round = (b.l2 / b.l1) * (1 - Math.min(1, Math.abs(discFill(b) - 1) * 2));
+            let sc = round * Math.sqrt(b.r) * (b.edge ? b.q * b.q * 2 : 1); // 가장자리 원 맞춤은 윤곽 지지율로 가중
+            if (prev && Math.hypot(b.cx - prev.cx, b.cy - prev.cy) < prev.r * 3 && Math.abs(b.r - prev.r) < prev.r * 0.3) sc *= 3; // 직전 공 위치 근처 우대(카메라가 조금 흔들려도 빨리 재고정)
+            if (sc > bsc) { bsc = sc; best = b; }
+          }
+        }
+        // 고정 판정(흔들림 허용): 기준 후보 근처로 반복 검출되면 누적, 가끔 빗나가는 건 3번까지 봐줌
+        const near = (a, c) => Math.hypot(a.cx - c.cx, a.cy - c.cy) < Math.max(1.5, c.r * 0.2) && Math.abs(a.r - c.r) < Math.max(1, c.r * 0.15);
+        if (best && this.anchor && near(best, this.anchor)) { this.hits.push(best); this.misses = 0; }
+        else if (++this.misses > 3 || !this.anchor) { this.anchor = best; this.hits = best ? [best] : []; this.misses = 0; }
+        this.stable = this.hits ? this.hits.length - 1 : 0;
         this.cand = best;
         this.msg = best ? `공 감지됨 — 고정 확인 중 (${this.stable}/${this.o.stableFrames})` : '공을 찾는 중… (화면에서 공을 탭하면 지정됩니다)';
         if (best && this.stable >= this.o.stableFrames) {
-          this.rest = { cx: best.cx, cy: best.cy, r: best.r, t };
+          const med = k => { const a = this.hits.map(h => h[k]).sort((p, q) => p - q); return a[a.length >> 1]; };
+          this.rest = { cx: med('cx'), cy: med('cy'), r: med('r'), edge: this.hits.filter(h => h.edge).length * 2 > this.hits.length, t };
+          const tee = this.teeCheck(f, this.rest);
+          this.rest.onTee = tee.onTee; this.rest.teeScore = tee.score;
+          this.lastRest = this.rest;
           this.ref = new Uint8Array(gray);
           this.restFrac = this.discFrac(f, thr);
+          this.readyN = 0; this.moveN = 0;
           this.state = 'ready';
-          this.msg = '준비 완료 — 스윙하세요';
+          this.msg = `준비 완료 (${tee.onTee ? '티 위 공' : '지면 공'}) — 스윙하세요`;
         }
       } else if (this.state === 'ready') {
         const frac = this.discFrac(f, thr);
-        if (frac < this.restFrac * 0.4) {
+        // 임팩트 판단: ① 정지 위치에서 공이 사라짐(측면 촬영) ② 공이 그 자리에서 작아지거나 커짐·조금 이동(후방/정면 촬영)
+        let moved = frac < this.restFrac * 0.4;
+        if (!moved) {
+          // 공이 놓였던 원 안의 밝기 변화(기준영상 대비). 후방 촬영처럼 제자리에서 작아져도 테두리가 바뀌어 커짐.
+          // 잡음·작은 흔들림으로 오작동하지 않도록 2프레임 연속일 때만
+          const md = this.discDiff(f);
+          if (md > Math.max(8, this.o.diffThr * 0.3)) { if (++this.moveN >= 2) moved = true; }
+          else { this.moveN = 0; if (++this.readyN % 45 === 0) { this.ref = new Uint8Array(gray); this.restFrac = this.discFrac(f, thr); } } // 실외 밝기 변화(구름 등)에 맞춰 기준 영상 갱신
+        }
+        if (moved) {
           this.state = 'track'; this.tImpact = t; this.track = []; this.miss = 0; this.dirSign = this.o.dir === 'right' ? 1 : this.o.dir === 'left' ? -1 : 0;
           this.msg = '임팩트 감지 — 추적 중';
           this.trackFrame(f, thr);
@@ -305,12 +515,23 @@ const Detector = (() => {
         const done = (this.track.length && this.miss >= 3) || t - this.tImpact > this.o.maxTrackTime;
         if (done) {
           if (this.track.length >= 2) { shot = this.computeShot(w, h); this.lastShot = shot; this.state = 'cool'; this.tCool = t; this.msg = shot.ok ? '샷 계산 완료' : '샷 계산 실패: ' + shot.reason; }
-          else { this.msg = '공 궤적을 충분히 잡지 못했습니다 (프레임 수 부족) — 다시 찾는 중'; this.lastFail = { t, n: this.track.length }; this.state = 'search'; this.stable = 0; }
+          else { this.msg = this.track.length ? '공 궤적을 충분히 잡지 못했습니다 (프레임 수 부족) — 다시 찾는 중' : '공이 움직였지만 날아가지 않음(카메라 흔들림?) — 다시 고정 중'; this.lastFail = { t, n: this.track.length }; this.state = 'search'; this.stable = 0; this.cand = null; this.anchor = null; this.hits = []; this.misses = 0; }
         }
       } else if (this.state === 'cool') {
         if (t - this.tCool > 1.5) { this.reset(); this.msg = '다음 공을 올려놓으세요'; }
       }
       return { state: this.state, msg: this.msg, rest: this.rest, cand: this.cand, track: this.track, shot, thr };
+    }
+
+    discDiff(f) {
+      const { gray, w, h } = f, r = this.rest, ref = this.ref;
+      let s = 0, n = 0;
+      const st = Math.max(1, Math.round(r.r / 10));
+      for (let y = Math.ceil(r.cy - r.r); y <= r.cy + r.r; y += st) for (let x = Math.ceil(r.cx - r.r); x <= r.cx + r.r; x += st) {
+        if (x < 0 || y < 0 || x >= w || y >= h || (x - r.cx) ** 2 + (y - r.cy) ** 2 > r.r * r.r) continue;
+        const i = y * w + x; s += Math.abs(gray[i] - ref[i]); n++;
+      }
+      return n ? s / n : 0;
     }
 
     discFrac(f, thr) {
@@ -326,36 +547,43 @@ const Detector = (() => {
     trackFrame(f, thr) {
       let b = this.detectMoving(f, thr);
       if (!b) { if (this.track.length) this.miss++; return; }
-      b = this.refine(f, b, true);
       this.miss = 0;
-      if (!this.dirSign) this.dirSign = Math.sign(b.cx - this.rest.cx) || 1;
+      const lt = this.track[this.track.length - 1];
+      if (lt && Math.hypot(b.cx - lt.u, b.cy - lt.v) < this.rest.r * 0.08 && Math.abs(b.r - lt.r) < this.rest.r * 0.02) { this.miss++; return; } // 멈춰 있는 것은 날아가는 공이 아님
       const blur = b.l1 / b.l2;
       const mk = blur < 1.6 ? this.marker(f, b) : null;
       // 딤플 텍스처용 잘라낸 영상 (모션 블러가 크면 무늬가 지워지므로 제외)
       const tex = (this.o.spinMode !== 'marker' && blur < 1.4) ? ST.crop(f, b) : null;
-      this.track.push({ t: f.t, u: b.cx, v: b.cy, r: b.r, blur, mk, tex });
+      this.track.push({ t: f.t, u: b.cx, v: b.cy, r: b.r, edge: !!b.edge, blur, mk, tex });
     }
 
     computeShot(w, h) {
-      const o = this.o, r0 = this.rest.r;
-      const pu = w / 2, pv = h / 2;
+      const o = this.o, pu = w / 2, pv = h / 2;
+      // 가장자리 원 맞춤 반지름은 원근 타원(바깥쪽으로 1/cosθ 늘어남)의 평균 → 짧은 반지름으로 환산
+      const minorR = (r, u, v, edge, fp) => { if (!edge) return r; const q = Math.hypot(u - pu, v - pv) / fp, c = 1 / Math.sqrt(1 + q * q); return r * 2 / (1 + 1 / c); };
+      let r0 = this.rest.r;
       // 초점거리(px): 사용자가 잰 값은 카메라↔공 직선거리 ρ0 → 깊이 Z0 = ρ0·cosθ0 로 바꿔 f = 2·r0·Z0/D (θ0도 f에 의존 → 반복)
       let fpx = 2 * r0 * o.camDist / o.ballD;
       for (let k = 0; k < 4; k++) {
+        r0 = minorR(this.rest.r, this.rest.cx, this.rest.cy, this.rest.edge, fpx);
         const q = Math.hypot(this.rest.cx - pu, this.rest.cy - pv) / fpx;
         fpx = 2 * r0 * o.camDist / Math.sqrt(1 + q * q) / o.ballD;
       }
       const z0 = fpx * o.ballD / (2 * r0);
       // 크기 이상치(가림·경계·잔상) 제거
-      const rs = this.track.map(s => s.r).sort((a, b) => a - b);
-      const rMed = rs[rs.length >> 1];
-      const tr = this.track.filter(s => Math.abs(s.r - rMed) / rMed < 0.2);
+      // 1/r(= 깊이)은 시간에 대해 거의 직선 → 중앙값 기울기 직선에서 12% 이상 벗어난 프레임 제거
+      // (후방·정면 촬영처럼 공 크기가 크게 변해도 정상 프레임은 유지)
+      const T = this.track, inv = T.map(s => 1 / s.r);
+      let slope = 0;
+      { const sl = []; for (let i = 0; i < T.length; i++) for (let j = i + 1; j < T.length; j++) if (T[j].t > T[i].t) sl.push((inv[j] - inv[i]) / (T[j].t - T[i].t)); sl.sort((a, b) => a - b); slope = sl.length ? sl[sl.length >> 1] : 0; }
+      const icpt = (() => { const a = T.map((s, k) => inv[k] - slope * s.t).sort((p, q) => p - q); return a[a.length >> 1]; })();
+      const tr = T.filter((s, k) => Math.abs(inv[k] - (icpt + slope * s.t)) / (icpt + slope * s.t) < 0.12);
       if (tr.length < 2) return { ok: false, reason: '유효 프레임 부족', frames: tr.length, spinPairs: 0 };
       // 공 크기(반지름)는 잡음이 크므로 평균 후 선형적합
       const P = tr.map(s => {
         // 구의 상은 타원이며 짧은 반지름 b = f·R/Z (Z = 깊이) → refine()이 b를 돌려줌
         const tx = (s.u - pu) / fpx, ty = (s.v - pv) / fpx;
-        const Z = o.useDepth ? fpx * o.ballD / (2 * s.r) : z0;
+        const Z = o.useDepth ? fpx * o.ballD / (2 * minorR(s.r, s.u, s.v, s.edge, fpx)) : z0;
         return { t: s.t, X: tx * Z, Y: ty * Z, Z };
       });
       const fit = key => {
@@ -374,9 +602,11 @@ const Detector = (() => {
         return sl.length ? sl[sl.length >> 1] : 0;
       };
       const vc = [fit('X'), fit('Y'), o.useDepth ? theil(PZ.length >= 2 ? PZ : P, 'Z') : 0];
-      const s = this.dirSign;
       // 카메라 좌표 → 월드(ENU: x 오른쪽, y 전방, z 위)
-      const M = s > 0 ? [[0, 0, -1], [1, 0, 0], [0, -1, 0]] : [[0, 0, 1], [-1, 0, 0], [0, -1, 0]];
+      // 보정된 카메라 자세가 있으면 그대로, 없으면 '측면 수직' 가정에서 공이 화면 어느 쪽으로 갔는지로 결정
+      if (!this.dirSign) this.dirSign = Math.sign(tr[tr.length - 1].u - tr[0].u) || 1;
+      const s = this.dirSign;
+      const M = o.camM || (s > 0 ? [[0, 0, -1], [1, 0, 0], [0, -1, 0]] : [[0, 0, 1], [-1, 0, 0], [0, -1, 0]]);
       const vw = M3.apply(M, vc);
       const speed = Math.hypot(vw[0], vw[1], vw[2]);
       const vla = Math.atan2(vw[2], Math.hypot(vw[0], vw[1])) * 180 / Math.PI;
@@ -409,14 +639,43 @@ const Detector = (() => {
       }
       // 딤플/표면 텍스처 기반 3축 스핀
       let te = null;
-      if (o.spinMode !== 'marker') { try { te = ST.estimate(tr, { maxRpm: o.maxRpm, cam: { fpx, pu, pv } }); } catch (e) { console.warn(e); te = null; } }
+      const maxRpm = o.clubMax ? (this.rest.onTee ? o.clubMax.tee : o.clubMax.ground) : o.maxRpm; // 티 위(드라이버)는 낮은 스핀만 탐색 → 더 안정
+      if (o.spinMode !== 'marker') { try { te = ST.estimate(tr, { maxRpm, cam: { fpx, pu, pv } }); } catch (e) { console.warn(e); te = null; } }
       if (te && te.conf >= 0.3 && te.links >= 3) { /* 쌍 1개뿐이면 일관성 검사가 안 되므로 버림 */ spin = toRpm(te.w); spinFrom = 'texture'; spinConf = te.conf; spinMax = te.maxRpm; }
       else if (markerSpin && o.spinMode === 'marker') { spin = markerSpin; spinFrom = 'marker'; } // 자동 모드는 텍스처(마커도 텍스처로 처리)만 신뢰
       const dtTot = tr[tr.length - 1].t - tr[0].t;
       const ok = speed > 3 && speed < 95 && vla > -10 && vla < 70;
-      return { ok, reason: ok ? '' : `비정상 값 (속도 ${speed.toFixed(1)} m/s, 발사각 ${vla.toFixed(1)}°)`, speed, vla, hla, spin, spinFrom, spinConf, spinMax, texPairs: te ? te.pairs : 0, frames: tr.length, spinPairs: ws.length, dtTot, fpx };
+      return { ok, reason: ok ? '' : `비정상 값 (속도 ${speed.toFixed(1)} m/s, 발사각 ${vla.toFixed(1)}°)`, onTee: !!this.rest.onTee, teeScore: this.rest.teeScore || 0, posed: !!o.camM, speed, vla, hla, spin, spinFrom, spinConf, spinMax, texPairs: te ? te.pairs : 0, frames: tr.length, spinPairs: ws.length, dtTot, fpx };
     }
   }
-  return { ShotDetector, blobs };
+  // 카메라 자세: 방위 φ(타깃 방향 기준, 카메라가 바라보는 방향, +는 오른쪽으로 돌아감), 아래로 숙임 pitch, 기울어짐 roll (도)
+  //  φ=0: 공 뒤에서 타깃을 바라봄(후방) · φ=-90: 공 오른편에서 왼쪽을 바라봄(공이 화면 오른쪽으로 진행)
+  //  φ=+90: 공 왼편에서 오른쪽을 바라봄(공이 화면 왼쪽으로 진행) · φ=180: 타깃 쪽에서 골퍼를 바라봄(정면)
+  function camPose(phiDeg, pitchDeg = 0, rollDeg = 0) {
+    const p = phiDeg * Math.PI / 180, t = pitchDeg * Math.PI / 180, rl = rollDeg * Math.PI / 180;
+    const z = [Math.sin(p) * Math.cos(t), Math.cos(p) * Math.cos(t), -Math.sin(t)];
+    const x0 = M3.norm(M3.cross(z, [0, 0, 1])), y0 = M3.cross(z, x0);
+    const x = [0, 1, 2].map(i => x0[i] * Math.cos(rl) + y0[i] * Math.sin(rl));
+    const y = [0, 1, 2].map(i => -x0[i] * Math.sin(rl) + y0[i] * Math.cos(rl));
+    return [[x[0], y[0], z[0]], [x[1], y[1], z[1]], [x[2], y[2], z[2]]]; // 열 = 카메라 축의 월드 방향
+  }
+  // 두 공(타격 위치 → 타깃 방향으로 놓은 공)의 카메라 좌표 3D 위치로 자세 보정. roll은 0(카메라 가로축 수평) 가정
+  function poseFromTwo(P1, P2, pitchHint = 0) {
+    const f = M3.norm([P2[0] - P1[0], P2[1] - P1[1], P2[2] - P1[2]]);
+    // 카메라 가로축(x)이 수평이라고 보면, 위쪽 = x × f (지면 위 두 공을 잇는 선과 x축 모두에 수직)
+    let u1 = M3.cross([1, 0, 0], f);
+    if (u1[1] > 0) u1 = u1.map(v => -v); // 위쪽은 화면 위(-y) 쪽
+    const sn = Math.hypot(u1[0], u1[1], u1[2]);
+    // 두 공이 화면 가로로 나란하면(측면 촬영) 숙임 각도를 두 공으로 알 수 없음 → 입력값(pitchHint) 사용
+    const p = pitchHint * Math.PI / 180, uS = [0, -Math.cos(p), -Math.sin(p)];
+    const wgt = Math.min(1, sn / 0.35);
+    let up = [0, 1, 2].map(i => (sn > 1e-6 ? u1[i] / sn : 0) * wgt + uS[i] * (1 - wgt));
+    const k = M3.dot(up, f); up = M3.norm(up.map((v, i) => v - k * f[i]));
+    const right = M3.cross(f, up);
+    const M = [right, f, up]; // 행 = 월드 축의 카메라 좌표 → world = M·cam
+    const zc = [M[0][2], M[1][2], M[2][2]];
+    return { M, phi: Math.atan2(zc[0], zc[1]) * 180 / Math.PI, pitch: -Math.asin(Math.max(-1, Math.min(1, zc[2]))) * 180 / Math.PI };
+  }
+  return { ShotDetector, blobs, camPose, poseFromTwo };
 })();
 if (typeof module !== 'undefined') module.exports = Detector;
