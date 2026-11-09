@@ -5,10 +5,11 @@
   const YD = 0.9144;
 
   // ---------- 설정 ----------
-  const SKEYS = ['sClub', 'sCamMode', 'sPhi', 'sPitch', 'sRoll', 'sCalM', 'sHand', 'sSpinMode', 'sDist', 'sDir', 'sThr', 'sDiff', 'sDepth', 'sProc', 'sTsFix', 'sCal', 'sDefSpin', 'sSurf', 'sWind', 'sWindDir', 'sAlt', 'sTemp', 'sUnit'];
+  const SKEYS = ['sFov', 'sKf', 'sClub', 'sCamMode', 'sPhi', 'sPitch', 'sRoll', 'sCalM', 'sHand', 'sSpinMode', 'sDist', 'sDir', 'sThr', 'sDiff', 'sDepth', 'sProc', 'sTsFix', 'sCal', 'sDefSpin', 'sSurf', 'sWind', 'sWindDir', 'sAlt', 'sTemp', 'sUnit'];
   try { const saved = JSON.parse(localStorage.getItem('psg-settings') || '{}'); for (const k of SKEYS) if (saved[k] != null) $(k).value = saved[k]; } catch (e) { }
   const S = () => ({
     hand: $('sHand').value, spinMode: $('sSpinMode').value, club: $('sClub').value,
+    fov: +$('sFov').value || 65, kf: +$('sKf').value || 0,
     camMode: $('sCamMode').value, phi: +$('sPhi').value || 0, pitch: +$('sPitch').value || 0, roll: +$('sRoll').value || 0, calM: $('sCalM').value,
     dist: +$('sDist').value || 1, dir: $('sDir').value, thr: +$('sThr').value || 0, diff: +$('sDiff').value || 30,
     depth: $('sDepth').value === '1', proc: +$('sProc').value, cal: +$('sCal').value || 1, defSpin: +$('sDefSpin').value || 0,
@@ -16,7 +17,7 @@
   });
   for (const k of SKEYS) $(k).addEventListener('change', () => {
     try { const o = {}; for (const kk of SKEYS) o[kk] = $(kk).value; localStorage.setItem('psg-settings', JSON.stringify(o)); } catch (e) { }
-    detOpts(); renderStats(); draw(); if ($('poseInfo')) $('poseInfo').textContent = poseText();
+    detOpts(); renderStats(); draw(); if ($('poseInfo')) $('poseInfo').textContent = poseText(); sizeInfo();
   });
   const dist = m => { const s = S(); return s.unit === 'yd' ? (m / YD) : m; };
   const du = () => S().unit === 'yd' ? 'yd' : 'm';
@@ -429,6 +430,9 @@
   }
   function detOpts(det) {
     const s = S(), o = { camDist: s.dist, dir: s.dir, thr: s.thr, diffThr: s.diff, useDepth: s.depth, spinMode: s.spinMode, camM: camMatrix() };
+    // 공 크기 조건: 탭으로 학습한 값이 있으면 그것(좁은 범위), 없으면 화각으로 추정(넓은 범위)
+    o.kFocal = s.kf > 0 ? s.kf : 0.5 / Math.tan(s.fov * Math.PI / 360);
+    o.sizeTol = s.kf > 0 ? [0.7, 1.45] : [0.55, 1.8];
     o.clubMax = s.club === 'auto' ? { tee: CLUBS.driver.maxRpm, ground: CLUBS.iron7.maxRpm } : { tee: CLUBS[s.club].maxRpm, ground: CLUBS[s.club].maxRpm };
     if (det) det.set(o); else { camDet?.set(o); vidDet?.set(o); }
     return o;
@@ -455,6 +459,12 @@
     if (out.cand && out.state === 'search') { c.strokeStyle = '#ffe45c'; c.beginPath(); c.arc(out.cand.cx, out.cand.cy, out.cand.r + 3, 0, 7); c.stroke(); }
     if (out.rest) { c.strokeStyle = out.state === 'ready' ? '#5fd39a' : 'rgba(95,211,154,.5)'; c.beginPath(); c.arc(out.rest.cx, out.rest.cy, out.rest.r + 4, 0, 7); c.stroke(); }
     for (const p of out.track || []) { c.strokeStyle = p.mk ? '#ff6b6b' : '#ffb454'; c.beginPath(); c.arc(p.u, p.v, p.r, 0, 7); c.stroke(); }
+    if (out.state === 'search' && camDet && camDet.rExp) { // 예상 공 크기 안내(왼쪽 아래 점선 원)
+      const R = camDet.rExp, tl = camDet.o.sizeTol || [0.55, 1.8];
+      c.setLineDash([4, 4]); c.strokeStyle = 'rgba(159,211,255,.9)'; c.lineWidth = 1.5;
+      c.beginPath(); c.arc(R * tl[1] + 6, cnv.height - R * tl[1] - 6, R, 0, 7); c.stroke(); c.setLineDash([]);
+      c.fillStyle = 'rgba(159,211,255,.9)'; c.font = '11px sans-serif'; c.fillText('예상 공 크기', 4, cnv.height - R * tl[1] * 2 - 12);
+    }
     if (CAL.on) for (const [k, p] of CAL.pts.entries()) { c.strokeStyle = '#9fd3ff'; c.lineWidth = 3; c.beginPath(); c.arc(p.cx, p.cy, p.r + 5, 0, 7); c.stroke(); c.fillStyle = '#9fd3ff'; c.font = 'bold 14px sans-serif'; c.fillText(k ? '② 타깃 방향' : '① 타격 위치', p.cx + p.r + 8, p.cy); }
     if (CAL.pts.length === 2) { c.strokeStyle = '#9fd3ff'; c.setLineDash([6, 5]); c.beginPath(); c.moveTo(CAL.pts[0].cx, CAL.pts[0].cy); c.lineTo(CAL.pts[1].cx, CAL.pts[1].cy); c.stroke(); c.setLineDash([]); }
     c.fillStyle = 'rgba(0,0,0,.55)'; c.fillRect(0, 0, 150, 18); c.fillStyle = '#fff'; c.font = '11px monospace';
@@ -520,6 +530,7 @@
       const f = camProc.grab(src, sw, sh); f.t = t; camLast = f;
       if (CAL.on) { overlay($('preview'), camProc, { state: '보정', track: [], thr: 0, msg: CAL.msg }, $('camMsg')); return; }
       const out = camDet.process(f);
+      learnSize(camDet);
       n++;
       if (n % 2 === 0 || out.state === 'track') overlay($('preview'), camProc, out, $('camMsg'));
       const now = performance.now();
@@ -552,6 +563,23 @@
     camDet.setSeed(u, v);
   });
 
+  // ---------- 공 크기 학습 ----------
+  // 화면에서 공을 탭해 고정하면 '초점거리/화면폭' 비율을 저장 → 이후 자동 탐색은 그 크기(±30~45%)의 둥근 물체만 공으로 봄
+  function learnSize(det) {
+    if (!det || !det.learnedK) return;
+    const k = det.learnedK; det.learnedK = 0;
+    if (!(k > 0.2 && k < 3)) return;
+    $('sKf').value = k.toFixed(4); $('sKf').dispatchEvent(new Event('change'));
+    $('camMsg').textContent = `공 크기를 학습했습니다 (거리 ${S().dist}m에서 지름 약 ${(k * (camLast?.w || 480) * 0.04267 / S().dist).toFixed(0)}px). 이제 비슷한 크기의 둥근 공만 찾습니다.`;
+    sizeInfo();
+  }
+  function sizeInfo() {
+    const s = S(), W = camLast?.w || s.proc, k = s.kf > 0 ? s.kf : 0.5 / Math.tan(s.fov * Math.PI / 360);
+    const d = k * W * 0.04267 / s.dist, tol = s.kf > 0 ? [0.7, 1.45] : [0.55, 1.8];
+    if ($('sizeInfo')) $('sizeInfo').textContent = `${s.kf > 0 ? '학습됨' : '화각 ' + s.fov + '° 추정'} · 거리 ${s.dist}m → 공 지름 약 ${d.toFixed(0)}px (허용 ${(d * tol[0]).toFixed(0)}~${(d * tol[1]).toFixed(0)}px)`;
+  }
+  $('sizeReset').onclick = () => { $('sKf').value = ''; $('sKf').dispatchEvent(new Event('change')); sizeInfo(); };
+
   // ---------- 카메라 각도 보정 (두 공) ----------
   // ① 타격 위치의 공, ② 타깃 방향으로 1~2m 앞에 놓은 공(둘 다 바닥에)을 차례로 탭 → 두 공의 3D 위치로 타깃 방향·카메라 숙임 계산
   let camLast = null;
@@ -578,12 +606,14 @@
     for (let k = 0; k < 4; k++) { const q = Math.hypot(a.cx - pu, a.cy - pv) / fpx; fpx = 2 * a.r * s.dist / Math.sqrt(1 + q * q) / D0; }
     const P = p => { const Z = fpx * D0 / (2 * p.r); return [(p.cx - pu) / fpx * Z, (p.cy - pv) / fpx * Z, Z]; };
     const pose = Detector.poseFromTwo(P(a), P(b), s.pitch);
+    $('sKf').value = (fpx / f.w).toFixed(4); $('sKf').dispatchEvent(new Event('change')); // ① 공으로 크기도 학습
     $('sCalM').value = JSON.stringify(pose.M.map(r => r.map(x => +x.toFixed(5))));
     $('sCamMode').value = 'calib';
     $('sCalM').dispatchEvent(new Event('change')); $('sCamMode').dispatchEvent(new Event('change'));
     CAL.pts = [];
     calEnd(`보정 완료 — 카메라 방위 ${pose.phi.toFixed(0)}° (−90=측면·0=후방), 숙임 ${pose.pitch.toFixed(0)}°. 두 번째 공을 치우고 시작하세요.`);
     $('poseInfo').textContent = poseText();
+  sizeInfo();
   }
   $('calBtn').onclick = () => CAL.on ? calEnd('보정을 취소했습니다') : calStart();
   if (navigator.mediaDevices?.enumerateDevices) listCams();
@@ -650,6 +680,7 @@
     camLast = { gray, w, h, t };
     if (CAL.on) { camProc.put(gray, w, h); overlay($('preview'), camProc, { state: '보정', track: [], thr: 0, msg: CAL.msg }, $('camMsg')); return; }
     const out = camDet.process({ gray, w, h, t });
+    learnSize(camDet);
     NATIVE.n++;
     if (NATIVE.n % 2 === 0 || out.state === 'track') { camProc.put(gray, w, h); overlay($('preview'), camProc, out, $('camMsg')); }
     const now = performance.now();

@@ -66,7 +66,8 @@ function shoot(sc, { fps, speed, vla, hla, spin, frames = 400, opts = {} }) {
   const a = vla * Math.PI / 180, b = hla * Math.PI / 180;
   const vw = [speed * Math.cos(a) * Math.sin(b), speed * Math.cos(a) * Math.cos(b), speed * Math.sin(a)];
   const wc = mul(sc.MT, spin.map(x => x * RPM));
-  const light = mul(sc.MT, [-0.3, -0.5, 0.8]).map((v, i, A) => v / Math.hypot(...A)); // 해: 위·뒤쪽 (월드 기준)
+  const L0 = opts.lightCam || (process.env.FRONTLIT ? [-0.3, -0.5, -0.8] : null); // 카메라 좌표 기준 광원 방향(앞쪽 조명 = 카메라 쪽)
+  const light = (L0 || mul(sc.MT, [-0.3, -0.5, 0.8])).map((v, i, A) => v / Math.hypot(...A)); // 기본: 해가 위·뒤쪽 (월드 기준)
   const det = new D.ShotDetector(Object.assign({ camDist: Math.hypot(sc.C[0] - sc.ballW[0], sc.C[1] - sc.ballW[1], sc.C[2] - sc.ballW[2]), dir: 'auto' }, opts)); // 사용자가 줄자로 잰 직선거리
   const tImp = 60.4 / fps; // 공이 놓인 뒤 60프레임 후 임팩트
   let res = null, rng = 9; const rnd = () => (rng = (rng * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
