@@ -2,16 +2,20 @@ package com.psg.screengolf
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.ContentValues
 import android.content.Context
 import android.content.pm.PackageManager
 import android.hardware.usb.UsbConstants
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.provider.MediaStore
 import android.util.Base64
 import android.util.Log
 import android.view.SurfaceHolder
@@ -44,6 +48,7 @@ import org.json.JSONObject
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicInteger
+import java.io.File
 import java.lang.reflect.Proxy
 import kotlin.math.abs
 
@@ -246,6 +251,7 @@ class MainActivity : AppCompatActivity() {
                 startCamera()
             }
             "stop" -> stopCamera()
+            "save" -> saveImage(m.optString("name", "screengolf.png"), m.optString("data"))
         }
     }
 
@@ -261,6 +267,34 @@ class MainActivity : AppCompatActivity() {
         if (fps > 0) o.put("fps", fps)
         if (msg != null) o.put("msg", msg)
         val text = o.toString()
+        main.post { safe { port?.postMessage(WebMessageCompat(text)) } }
+    }
+
+    // 진단용 화면 저장: 웹앱이 보낸 PNG(base64)를 '다운로드/ScreenGolf' 폴더에 저장
+    private fun saveImage(name: String, b64: String) {
+        val res = JSONObject().put("type", "saved")
+        try {
+            val bytes = Base64.decode(b64, Base64.DEFAULT)
+            val fileName = name.replace(Regex("[^A-Za-z0-9._-]"), "_")
+            val where: String
+            if (Build.VERSION.SDK_INT >= 29) {
+                val cv = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                    put(MediaStore.MediaColumns.MIME_TYPE, "image/png")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/ScreenGolf")
+                }
+                val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv) ?: throw Exception("저장 위치를 만들 수 없음")
+                contentResolver.openOutputStream(uri)?.use { it.write(bytes) } ?: throw Exception("파일을 열 수 없음")
+                where = "다운로드/ScreenGolf/$fileName"
+            } else {
+                val dir = File(getExternalFilesDir(null), "ScreenGolf"); dir.mkdirs()
+                val f = File(dir, fileName); f.writeBytes(bytes); where = f.absolutePath
+            }
+            res.put("path", where)
+        } catch (e: Exception) {
+            res.put("error", e.message ?: e.toString())
+        }
+        val text = res.toString()
         main.post { safe { port?.postMessage(WebMessageCompat(text)) } }
     }
 

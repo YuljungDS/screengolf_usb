@@ -5,10 +5,11 @@
   const YD = 0.9144;
 
   // ---------- 설정 ----------
-  const SKEYS = ['sFov', 'sKf', 'sClub', 'sCamMode', 'sPhi', 'sPitch', 'sRoll', 'sCalM', 'sHand', 'sSpinMode', 'sDist', 'sDir', 'sThr', 'sDiff', 'sDepth', 'sProc', 'sTsFix', 'sCal', 'sDefSpin', 'sSurf', 'sWind', 'sWindDir', 'sAlt', 'sTemp', 'sUnit'];
+  const SKEYS = ['sNet', 'sDiag', 'sFov', 'sKf', 'sClub', 'sCamMode', 'sPhi', 'sPitch', 'sRoll', 'sCalM', 'sHand', 'sSpinMode', 'sDist', 'sDir', 'sThr', 'sDiff', 'sDepth', 'sProc', 'sTsFix', 'sCal', 'sDefSpin', 'sSurf', 'sWind', 'sWindDir', 'sAlt', 'sTemp', 'sUnit'];
   try { const saved = JSON.parse(localStorage.getItem('psg-settings') || '{}'); for (const k of SKEYS) if (saved[k] != null) $(k).value = saved[k]; } catch (e) { }
   const S = () => ({
     hand: $('sHand').value, spinMode: $('sSpinMode').value, club: $('sClub').value,
+    useNet: $('sNet').value !== '0', diag: $('sDiag').value !== '0',
     fov: +$('sFov').value || 65, kf: +$('sKf').value || 0,
     camMode: $('sCamMode').value, phi: +$('sPhi').value || 0, pitch: +$('sPitch').value || 0, roll: +$('sRoll').value || 0, calM: $('sCalM').value,
     dist: +$('sDist').value || 1, dir: $('sDir').value, thr: +$('sThr').value || 0, diff: +$('sDiff').value || 30,
@@ -432,6 +433,7 @@
     const s = S(), o = { camDist: s.dist, dir: s.dir, thr: s.thr, diffThr: s.diff, useDepth: s.depth, spinMode: s.spinMode, camM: camMatrix() };
     // 공 크기 조건: 탭으로 학습한 값이 있으면 그것(좁은 범위), 없으면 화각으로 추정(넓은 범위)
     o.kFocal = s.kf > 0 ? s.kf : 0.5 / Math.tan(s.fov * Math.PI / 360);
+    o.useNet = s.useNet; o.netTemplates = templates.length ? templates : null; o.kLearned = s.kf > 0;
     o.sizeTol = s.kf > 0 ? [0.7, 1.45] : [0.55, 1.8];
     o.clubMax = s.club === 'auto' ? { tee: CLUBS.driver.maxRpm, ground: CLUBS.iron7.maxRpm } : { tee: CLUBS[s.club].maxRpm, ground: CLUBS[s.club].maxRpm };
     if (det) det.set(o); else { camDet?.set(o); vidDet?.set(o); }
@@ -459,6 +461,16 @@
     if (out.cand && out.state === 'search') { c.strokeStyle = '#ffe45c'; c.beginPath(); c.arc(out.cand.cx, out.cand.cy, out.cand.r + 3, 0, 7); c.stroke(); }
     if (out.rest) { c.strokeStyle = out.state === 'ready' ? '#5fd39a' : 'rgba(95,211,154,.5)'; c.beginPath(); c.arc(out.rest.cx, out.rest.cy, out.rest.r + 4, 0, 7); c.stroke(); }
     for (const p of out.track || []) { c.strokeStyle = p.mk ? '#ff6b6b' : '#ffb454'; c.beginPath(); c.arc(p.u, p.v, p.r, 0, 7); c.stroke(); }
+    const dd = (cnv.id === 'preview' ? camDet : vidDet);
+    if (out.state === 'search' && dd && S().diag) { // 진단: 공 후보에서 탈락한 이유
+      c.font = '10px sans-serif'; c.lineWidth = 1;
+      for (const d of dd.diag || []) {
+        if (d.r < 3 || d.r > cnv.height / 2) continue; // 화면 반 이상 크기(줄·바닥 등)는 표시 생략
+        c.strokeStyle = 'rgba(255,107,107,.75)'; c.setLineDash([3, 3]); c.beginPath(); c.arc(d.cx, d.cy, d.r, 0, 7); c.stroke(); c.setLineDash([]);
+        c.fillStyle = 'rgba(255,140,140,.95)'; c.fillText(d.why, d.cx - d.r, d.cy - d.r - 2);
+      }
+      if (out.cand && out.cand.net != null) { c.fillStyle = '#ffe45c'; c.fillText(`공 ${(out.cand.net * 100).toFixed(0)}%`, out.cand.cx + out.cand.r + 4, out.cand.cy); }
+    }
     if (out.state === 'search' && camDet && camDet.rExp) { // 예상 공 크기 안내(왼쪽 아래 점선 원)
       const R = camDet.rExp, tl = camDet.o.sizeTol || [0.55, 1.8];
       c.setLineDash([4, 4]); c.strokeStyle = 'rgba(159,211,255,.9)'; c.lineWidth = 1.5;
@@ -563,9 +575,20 @@
     camDet.setSeed(u, v);
   });
 
+  // ---------- '내 공' 템플릿(탭한 공 모습) ----------
+  const TPL_KEY = 'psg-ball-templates';
+  let templates = [];
+  try { templates = (JSON.parse(localStorage.getItem(TPL_KEY) || '[]') || []).map(a => new Float32Array(a)); } catch (e) { templates = []; }
+  function saveTemplates() { try { localStorage.setItem(TPL_KEY, JSON.stringify(templates.map(t => Array.from(t, v => +v.toFixed(3))))); } catch (e) { } }
+
   // ---------- 공 크기 학습 ----------
   // 화면에서 공을 탭해 고정하면 '초점거리/화면폭' 비율을 저장 → 이후 자동 탐색은 그 크기(±30~45%)의 둥근 물체만 공으로 봄
   function learnSize(det) {
+    if (det && det.learnedTemplate) { // 탭한 공 모습을 '내 공' 템플릿으로 저장(최대 8개, 오래된 것부터 교체)
+      templates.push(det.learnedTemplate); det.learnedTemplate = null;
+      if (templates.length > 8) templates.shift();
+      saveTemplates(); detOpts(); sizeInfo();
+    }
     if (!det || !det.learnedK) return;
     const k = det.learnedK; det.learnedK = 0;
     if (!(k > 0.2 && k < 3)) return;
@@ -576,9 +599,28 @@
   function sizeInfo() {
     const s = S(), W = camLast?.w || s.proc, k = s.kf > 0 ? s.kf : 0.5 / Math.tan(s.fov * Math.PI / 360);
     const d = k * W * 0.04267 / s.dist, tol = s.kf > 0 ? [0.7, 1.45] : [0.55, 1.8];
-    if ($('sizeInfo')) $('sizeInfo').textContent = `${s.kf > 0 ? '학습됨' : '화각 ' + s.fov + '° 추정'} · 거리 ${s.dist}m → 공 지름 약 ${d.toFixed(0)}px (허용 ${(d * tol[0]).toFixed(0)}~${(d * tol[1]).toFixed(0)}px)`;
+    if ($('sizeInfo')) $('sizeInfo').textContent = `${s.kf > 0 ? '학습됨' : '화각 ' + s.fov + '° 추정'} · 거리 ${s.dist}m → 공 지름 약 ${d.toFixed(0)}px (허용 ${(d * tol[0]).toFixed(0)}~${(d * tol[1]).toFixed(0)}px) · 내 공 모습 ${templates.length}개 학습`;
   }
-  $('sizeReset').onclick = () => { $('sKf').value = ''; $('sKf').dispatchEvent(new Event('change')); sizeInfo(); };
+  $('sizeReset').onclick = () => { $('sKf').value = ''; templates = []; saveTemplates(); $('sKf').dispatchEvent(new Event('change')); sizeInfo(); };
+
+  // ---------- 화면 저장(진단용) ----------
+  // 지금 카메라 프레임(처리 해상도, 흑백 원본)을 PNG로 저장 → 대화창에 올려 주면 실제 영상으로 검출을 맞출 수 있음
+  function frameToPNG(f) {
+    const c = document.createElement('canvas'); c.width = f.w; c.height = f.h;
+    const x = c.getContext('2d'), img = x.createImageData(f.w, f.h);
+    for (let i = 0, j = 0; i < f.w * f.h; i++, j += 4) { img.data[j] = img.data[j + 1] = img.data[j + 2] = f.gray[i]; img.data[j + 3] = 255; }
+    x.putImageData(img, 0, 0);
+    return c.toDataURL('image/png');
+  }
+  $('snapBtn').onclick = () => {
+    const f = camLast; if (!f) { camWarn('카메라를 먼저 시작하세요.'); return; }
+    const ts = new Date(), p = n => String(n).padStart(2, '0');
+    const name = `screengolf_${ts.getFullYear()}${p(ts.getMonth() + 1)}${p(ts.getDate())}_${p(ts.getHours())}${p(ts.getMinutes())}${p(ts.getSeconds())}_${f.w}x${f.h}.png`;
+    const url = frameToPNG(f);
+    if (NATIVE.port) { NATIVE.send({ cmd: 'save', name, data: url.split(',')[1] }); $('camMsg').textContent = '저장 중…'; return; }
+    try { const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); $('camMsg').textContent = `${name} 저장(다운로드)`; }
+    catch (e) { $('camMsg').textContent = '이 화면에서는 저장할 수 없습니다(앱에서 사용하세요)'; }
+  };
 
   // ---------- 카메라 각도 보정 (두 공) ----------
   // ① 타격 위치의 공, ② 타깃 방향으로 1~2m 앞에 놓은 공(둘 다 바닥에)을 차례로 탭 → 두 공의 3D 위치로 타깃 방향·카메라 숙임 계산
@@ -637,6 +679,7 @@
     if (typeof d === 'string') {
       if (d.startsWith('b64:')) return nativeFrame(b64ToBuf(d.slice(4)));
       let m; try { m = JSON.parse(d); } catch (e) { return; }
+      if (m.type === 'saved') { $('camMsg').textContent = m.error ? `저장 실패: ${m.error}` : `저장했습니다: ${m.path} — 이 사진을 Claude 대화창에 올려 주세요`; return; }
       if (m.type === 'status') {
         if (Array.isArray(m.sizes) && m.sizes.length) { NATIVE.sizes = m.sizes; onCamSel(); }
         NATIVE.info = `${m.device || 'USB 카메라 없음'}${m.size ? ' · ' + m.size : ''}${m.fps ? ` · 수신 ${m.fps.toFixed(0)} fps` : ''}${m.drops ? ` · 버림 ${m.drops}` : ''}`;

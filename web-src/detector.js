@@ -4,6 +4,7 @@
 // 스핀: 공에 그린 '띠 모양 선(마커)'의 3D 자세 변화를 프레임 간 비교(TRIAD)해 회전 벡터를 구함
 const Detector = (() => {
   const ST = typeof SpinTex !== 'undefined' ? SpinTex : require('./spintex.js');
+  let BN = null; try { BN = typeof BallNet !== 'undefined' ? BallNet : require('./ballnet.js'); } catch (e) { BN = null; }
   const M3 = {
     norm: a => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; },
     dot: (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2],
@@ -103,10 +104,20 @@ const Detector = (() => {
         camM: null, // 카메라 자세(월드←카메라 3x3). null이면 '측면 수직' 가정(공 진행 방향으로 자동 판별)
         // 공 크기 조건: 예상 반지름 = kFocal·화면폭·D / (2·거리). kFocal = 초점거리(px)/화면폭 — 화각 65°면 0.785
         kFocal: 0.785, sizeTol: [0.55, 1.8], minInlier: 0.5, minShade: 0.035,
+        useNet: true, netTemplates: null, // 학습형 판별기 사용, 사용자가 탭한 '내 공' 템플릿(정규화 16×16)
       }, opts);
+      // 기본 판별기: 신경망 확률과 '내 공' 템플릿 유사도 중 큰 값
+      if (!this.o.ballNet && BN) this.o.ballNet = (f, b) => {
+        if (!this.o.useNet) return 1;
+        const c = BN.crop(f, b.cx, b.cy, b.r);
+        let p = BN.prob(c);
+        const T = this.o.netTemplates;
+        if (T && T.length) { const sm = BN.sim(c, T); p = Math.max(p, Math.min(1, Math.max(0, (sm - 0.55) / 0.35))); }
+        return p;
+      };
       this.reset();
     }
-    set(opts) { Object.assign(this.o, opts); }
+    set(opts) { if (opts.kFocal != null && opts.kFocal !== this.o.kFocal) this.wideMode = false; Object.assign(this.o, opts); }
     reset() { this.state = 'search'; this.stable = 0; this.anchor = null; this.hits = []; this.misses = 0; this.rest = null; this.cand = null; this.track = []; this.seed = this.seed || null; this.lastShot = null; this.msg = '공을 찾는 중…'; }
     setSeed(u, v) { this.seed = { u, v }; this.reset(); }
 
@@ -329,7 +340,13 @@ const Detector = (() => {
         const v = gray[y * w + x]; s1 += v; s2 += v * v; n++;
       }
       const mean = n ? s1 / n : 0, shade = n && mean > 0 ? Math.sqrt(Math.max(0, s2 / n - mean * mean)) / mean : 0;
-      return { cv, valid, inlier: inl, protrude, arc, shade, cx: c.cx, cy: c.cy, r: c.r };
+      // 포화(하얗게 날아감) 비율: 흑백 카메라 자동노출로 흰 공이 255로 꽉 차면 명암이 사라짐 → 입체감 검사를 할 수 없음
+      let sat = 0, sn = 0;
+      for (let y = Math.ceil(c.cy - c.r * 0.6); y <= c.cy + c.r * 0.6; y += st) for (let x = Math.ceil(c.cx - c.r * 0.6); x <= c.cx + c.r * 0.6; x += st) {
+        if (x < 0 || y < 0 || x >= w || y >= h || (x - c.cx) ** 2 + (y - c.cy) ** 2 > (c.r * 0.6) ** 2) continue;
+        sn++; if (gray[y * w + x] >= 248) sat++;
+      }
+      return { cv, valid, inlier: inl, protrude, arc, shade, sat: sn ? sat / sn : 0, cx: c.cx, cy: c.cy, r: c.r };
     }
 
     // 예상 공 반지름(px) — 처리 영상 폭 w 기준
@@ -535,8 +552,13 @@ const Detector = (() => {
       if (this.state === 'search') {
         // 임계값 두 단계로 후보 수집: 기본값 + (밝은 하늘·구름이 기본값 근처일 때를 위한) 가장 밝은 부분 기준 높은 값
         const thrs = [thr];
-        const rExp = this.expectedR(w), tol = this.o.sizeTol;
-        this.rExp = rExp;
+        const rExp = this.expectedR(w);
+        // 오래(약 1.5초) 못 찾으면 크기 범위를 넓힘 — 실제 화각·거리가 설정과 다를 때
+        if ((this.noFind || 0) > 45) this.wideMode = true; // 한 번 넓히면 크기를 학습할 때까지 유지
+        const wide = !!this.wideMode;
+        const tol = wide ? [Math.min(0.3, this.o.sizeTol[0]), Math.max(3.5, this.o.sizeTol[1])] : this.o.sizeTol;
+        this.rExp = rExp; this.tolNow = tol; this.diag = [];
+        const D = (b, why) => { if (this.diag.length < 40) this.diag.push({ cx: b.cx, cy: b.cy, r: b.r, why }); };
         { const T2 = Math.max(this.hiLvl - 55, thr + 0.35 * (this.hiLvl - thr)); if (T2 > thr + 4) thrs.push(T2); }
         const bs = [];
         for (const T of thrs) {
@@ -548,23 +570,32 @@ const Detector = (() => {
             if (!(b.n < w * h * 0.08 && b.minx > 2 && b.miny > 2 && b.maxx < w - 3 && b.maxy < h - 3)) continue;
             // 크기 조건(밝은 부분이 너무 크거나 작으면 정밀화 전에 바로 제외)
             const rawR = Math.max(b.maxx - b.minx, b.maxy - b.miny) / 2;
-            if (!this.seed && (rawR > rExp * tol[1] * 1.25 || rawR < rExp * tol[0] * 0.4)) continue;
-            const r = this.refine(f, b, false);
-            if (!(r.l2 / r.l1 > 0.6 && discFill(r) > 0.7 && discFill(r) < 1.3 && r.r >= 4 && r.r < h / 4)) continue;
-            if (!this.seed && (r.r < rExp * tol[0] || r.r > rExp * tol[1])) continue;
+            if (!this.seed && (rawR > rExp * tol[1] * 1.25 || rawR < rExp * tol[0] * 0.4)) { if (rawR > 3) D({ cx: b.cx, cy: b.cy, r: rawR }, '크기'); continue; }
+            let r = this.refine(f, b, false);
+            if (!(r.l2 / r.l1 > 0.6 && discFill(r) > 0.7 && discFill(r) < 1.3 && r.r >= 4 && r.r < h / 4)) {
+              // 하얀 티·그림자 등이 붙어 덩어리 모양이 틀어진 경우: 윤곽 원 맞춤으로 공만 다시 찾아봄
+              const seedR = Math.min(rawR, Math.max(b.r, rExp));
+              const v = this.verify(f, { cx: b.cx, cy: b.cy - (b.maxy - b.miny > b.maxx - b.minx ? (b.maxy - b.miny - (b.maxx - b.minx)) / 2 : 0), r: seedR });
+              if (v.inlier >= 0.6 && v.protrude <= 0.2 && v.r >= 4) r = Object.assign({}, r, { cx: v.cx, cy: v.cy, r: v.r, rMaj: v.r, l1: v.r * v.r / 4, l2: v.r * v.r / 4, n: Math.round(Math.PI * v.r * v.r) });
+              else { D(r, '모양'); continue; }
+            }
+            if (!this.seed && (r.r < rExp * tol[0] || r.r > rExp * tol[1])) { D(r, '크기'); continue; }
             if (bs.some(q => Math.hypot(q.cx - r.cx, q.cy - r.cy) < q.r * 0.5)) continue; // 같은 공 중복
             const vf = this.verify(f, r);
-            r.vcv = vf.cv; r.vvalid = vf.valid; r.vshade = vf.shade; r.vin = vf.inlier;
-            if (!this.seed && (vf.inlier < this.o.minInlier || vf.protrude > 0.2)) continue; // 윤곽이 원이 아님(사각형·타원·D자·뭉개진 덩어리)
-            if (!this.seed && vf.shade < this.o.minShade) continue; // 안쪽이 균일한 평평한 흰 면(종이·원판·흰 줄) — 공은 구라서 명암이 있음
+            r.vcv = vf.cv; r.vvalid = vf.valid; r.vshade = vf.shade; r.vin = vf.inlier; r.vsat = vf.sat;
+            if (!this.seed && (vf.inlier < this.o.minInlier || vf.protrude > 0.2)) { D(r, '원 아님'); continue; } // 윤곽이 원이 아님(사각형·타원·D자·뭉개진 덩어리)
+            // 안쪽이 균일한 평평한 흰 면(종이·원판·흰 줄) 제외 — 단 공이 하얗게 포화되면 명암이 없어지므로 그때는 검사하지 않음
+            if (!this.seed && vf.sat < 0.3 && vf.shade < this.o.minShade) { D(r, '평평'); continue; }
             // 윤곽 원 맞춤이 더 정확하면 그 원을 사용(밝기 영역이 매트 결로 새어 중심이 틀어진 경우)
             if (vf.inlier >= this.o.minInlier && vf.r) {
-              if (!this.seed && (vf.r < rExp * tol[0] || vf.r > rExp * tol[1])) continue;
+              if (!this.seed && (vf.r < rExp * tol[0] || vf.r > rExp * tol[1])) { D(r, '크기'); continue; }
               r.cx = vf.cx; r.cy = vf.cy; r.r = vf.r;
             }
+            if (this.o.ballNet) { r.net = this.o.ballNet(f, r); if (!this.seed && r.net < 0.08) { D(r, '학습판별'); continue; } } // 학습형 판별기
             bs.push(r);
           }
         }
+        this.noFind = bs.length ? 0 : (this.noFind || 0) + 1;
         let best = null;
         if (this.seed) { let bd = Infinity; for (const b of bs) { const d = Math.hypot(b.cx - this.seed.u, b.cy - this.seed.v); if (d < bd && d < Math.max(30, b.r * 4)) { bd = d; best = b; } } }
         else {
@@ -574,8 +605,10 @@ const Detector = (() => {
             // 점수: 윤곽 원형도 × 예상 크기와의 일치 × 입체감(평평한 흰 면 감점)
             const round = Math.min(1, (b.vin || 0) / 0.85);
             const sizeFit = Math.exp(-0.5 * (Math.log(b.r / rExp) / 0.35) ** 2);
-            const shadeFit = Math.min(1, 0.25 + b.vshade / 0.06);
-            let sc = round * sizeFit * shadeFit;
+            const shadeFit = b.vsat >= 0.3 ? 0.7 : Math.min(1, 0.25 + b.vshade / 0.06);
+            const netFit = b.net != null ? 0.2 + 0.8 * b.net : 1;
+            let sc = round * sizeFit * shadeFit * netFit;
+            b.score = sc;
             if (prev && Math.hypot(b.cx - prev.cx, b.cy - prev.cy) < prev.r * 3 && Math.abs(b.r - prev.r) < prev.r * 0.3) sc *= 3; // 직전 공 위치 근처 우대(카메라가 조금 흔들려도 빨리 재고정)
             if (sc > bsc) { bsc = sc; best = b; }
           }
@@ -586,20 +619,23 @@ const Detector = (() => {
         else if (++this.misses > 3 || !this.anchor) { this.anchor = best; this.hits = best ? [best] : []; this.misses = 0; }
         this.stable = this.hits ? this.hits.length - 1 : 0;
         this.cand = best;
-        this.msg = best ? `공 감지됨 — 고정 확인 중 (${this.stable}/${this.o.stableFrames})` : `공을 찾는 중… 예상 지름 ${(rExp * 2).toFixed(0)}px (${(rExp * 2 * tol[0]).toFixed(0)}~${(rExp * 2 * tol[1]).toFixed(0)}) — 공을 탭하면 지정·크기 학습`;
+        this.msg = best ? `공 감지됨 — 고정 확인 중 (${this.stable}/${this.o.stableFrames})` : `공을 찾는 중… 예상 지름 ${(rExp * 2).toFixed(0)}px (${(rExp * 2 * tol[0]).toFixed(0)}~${(rExp * 2 * tol[1]).toFixed(0)})${wide ? ' · 범위 넓혀 찾는 중' : ''} — 공을 탭하면 지정·크기 학습`;
         if (best && this.stable >= this.o.stableFrames) {
           const med = k => { const a = this.hits.map(h => h[k]).sort((p, q) => p - q); return a[a.length >> 1]; };
-          this.rest = { cx: med('cx'), cy: med('cy'), r: med('r'), edge: this.hits.filter(h => h.edge).length * 2 > this.hits.length, t };
+          this.rest = { sat: best.vsat || 0, net: best.net, cx: med('cx'), cy: med('cy'), r: med('r'), edge: this.hits.filter(h => h.edge).length * 2 > this.hits.length, t };
           const tee = this.teeCheck(f, this.rest);
           this.rest.onTee = tee.onTee; this.rest.teeScore = tee.score;
           this.lastRest = this.rest;
           // 사용자가 탭으로 지정한 공이면 크기를 학습(초점거리 비율) → 이후 자동 탐색이 이 크기 근처만 찾음
-          if (this.seed) { this.learnedK = 2 * this.rest.r * this.o.camDist / (this.o.ballD * w); }
+          if (this.seed) {
+            this.learnedK = 2 * this.rest.r * this.o.camDist / (this.o.ballD * w);
+            if (BN) this.learnedTemplate = BN.zvec(BN.crop(f, this.rest.cx, this.rest.cy, this.rest.r)).slice(); // '내 공' 모습 저장용
+          }
           this.ref = new Uint8Array(gray);
           this.restFrac = this.discFrac(f, thr);
           this.readyN = 0; this.moveN = 0;
           this.state = 'ready';
-          this.msg = `준비 완료 (${tee.onTee ? '티 위 공' : '지면 공'}) — 스윙하세요`;
+          this.msg = `준비 완료 (${tee.onTee ? '티 위 공' : '지면 공'}) — 스윙하세요${this.rest.sat > 0.5 ? ' · ⚠ 공이 하얗게 포화됨: 조명/노출을 낮춰야 스핀 측정 가능' : ''}`;
         }
       } else if (this.state === 'ready') {
         const frac = this.discFrac(f, thr);
@@ -621,7 +657,8 @@ const Detector = (() => {
         this.trackFrame(f, thr);
         const done = (this.track.length && this.miss >= 3) || t - this.tImpact > this.o.maxTrackTime;
         if (done) {
-          if (this.track.length >= 2) { shot = this.computeShot(w, h); this.lastShot = shot; this.state = 'cool'; this.tCool = t; this.msg = shot.ok ? '샷 계산 완료' : '샷 계산 실패: ' + shot.reason; }
+          if (this.track.length >= 2) { shot = this.computeShot(w, h); this.lastShot = shot;
+            if (shot.ok && !this.o.kLearned) this.learnedK = 2 * this.rest.r * this.o.camDist / (this.o.ballD * w); /* 실제로 날아간 공 = 확실한 공 → 크기 자동 학습 */ this.state = 'cool'; this.tCool = t; this.msg = shot.ok ? '샷 계산 완료' : '샷 계산 실패: ' + shot.reason; }
           else { this.msg = this.track.length ? '공 궤적을 충분히 잡지 못했습니다 (프레임 수 부족) — 다시 찾는 중' : '공이 움직였지만 날아가지 않음(카메라 흔들림?) — 다시 고정 중'; this.lastFail = { t, n: this.track.length }; this.state = 'search'; this.stable = 0; this.cand = null; this.anchor = null; this.hits = []; this.misses = 0; }
         }
       } else if (this.state === 'cool') {

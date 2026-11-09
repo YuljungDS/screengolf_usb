@@ -1,6 +1,6 @@
 // 실외형 합성 장면: 임의 카메라 자세(측면/비스듬/후방) + 잔디 지면 + 하늘 + 티(선택)
 // 검증: 티 판별, 두 공 자세 보정, 비스듬·후방 촬영에서 속도·방향·스핀
-const D = require('../detector.js');
+const D = require(process.env.DET || '../detector.js');
 const RPM = 2 * Math.PI / 60;
 const R = 0.04267 / 2;
 
@@ -91,7 +91,7 @@ function shoot(sc, { fps, speed, vla, hla, spin, frames = 400, opts = {} }) {
           const tt = bq - Math.sqrt(disc), n = [(rx * tt - Pc[0]) / R, (ry * tt - Pc[1]) / R, (rz * tt - Pc[2]) / R];
           const nb = [Rt[0][0] * n[0] + Rt[1][0] * n[1] + Rt[2][0] * n[2], Rt[0][1] * n[0] + Rt[1][1] * n[1] + Rt[2][1] * n[2], Rt[0][2] * n[0] + Rt[1][2] * n[1] + Rt[2][2] * n[2]];
           const lam = Math.max(0, -(n[0] * light[0] + n[1] * light[1] + n[2] * light[2]) * -1);
-          acc += 95 + 150 * lam - 55 * tex(nb); cov++;
+          acc += ((95 + 150 * lam - 55 * tex(nb)) * (opts.gain || +process.env.GAIN || 1)); cov++;
         }
         if (cov) gray[y * W + x] = Math.max(0, Math.min(255, (acc / cov) * (cov / 4) + gray[y * W + x] * (1 - cov / 4) + (rnd() - .5) * 5));
       }

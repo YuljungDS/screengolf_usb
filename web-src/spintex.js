@@ -38,10 +38,14 @@ const SpinTex = (() => {
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) g[y * W + x] = f.gray[(y0 + y) * f.w + x0 + x];
     // 공 안쪽 픽셀만으로 국소 평균(정규화 합성곱) → 공/배경 경계가 무늬로 섞이지 않게
     const cx = b.cx - x0, cy = b.cy - y0, mk = new Float32Array(W * H), gm = new Float32Array(W * H);
+    let satN = 0, inN = 0;
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       const i = y * W + x;
-      if ((x - cx) ** 2 + (y - cy) ** 2 <= (r * 0.95) ** 2) { mk[i] = 1; gm[i] = g[i]; }
+      if ((x - cx) ** 2 + (y - cy) ** 2 <= (r * 0.95) ** 2) { mk[i] = 1; gm[i] = g[i]; inN++; if (g[i] >= 248) satN++; }
     }
+    // 하얗게 포화된 공은 딤플이 안 보여 회전을 읽을 수 없음(오히려 엉뚱한 값) → 이 프레임은 스핀에 쓰지 않음
+    if (inN && satN / inN > 0.75) return null;
+    const ok = new Uint8Array(W * H); for (let i = 0; i < W * H; i++) ok[i] = (mk[i] && g[i] < 246) ? 1 : 0; // 포화 픽셀(무늬 없음)은 비교에서 제외
     // 1) 조명 음영 제거: 구면 법선의 2차 다항식(9항)으로 밝기를 최소제곱 근사해 뺀다
     //    (한쪽 조명이면 단순 국소평균만으로는 음영 기울기가 남아 회전축이 기울어 보임)
     const NB = 9, AtA = new Float64Array(NB * NB), Atb = new Float64Array(NB), basis = new Float64Array(NB);
@@ -65,7 +69,7 @@ const SpinTex = (() => {
     const hp = new Float32Array(W * H);
     for (let i = 0; i < W * H; i++) hp[i] = mk[i] ? res[i] - lo[i] / Math.max(1e-3, lm[i]) : 0;
     const hpc = boxBlur(hp, W, H, Math.max(1, Math.round(r * 0.05)));
-    return { x0, y0, W, H, hp, hpc, cx: b.cx - x0, cy: b.cy - y0, ax: b.cx, ay: b.cy, r };
+    return { x0, y0, W, H, hp, hpc, ok, cx: b.cx - x0, cy: b.cy - y0, ax: b.cx, ay: b.cy, r };
   }
 
   function solve(A, b, n) { // 가우스 소거 (부분 피벗)
@@ -116,6 +120,7 @@ const SpinTex = (() => {
     for (let y = Math.ceil(B.cy - R); y <= B.cy + R; y += stride) for (let x = Math.ceil(B.cx - R); x <= B.cx + R; x += stride) {
       const dx = (x - B.cx) / B.r, dy = (y - B.cy) / B.r, q = dx * dx + dy * dy;
       if (q > 0.74) continue;
+      if (B.ok && !B.ok[y * B.W + x]) continue;
       const c = mv(B.V, dx, dy, -Math.sqrt(1 - q));
       pts.push(c[0], c[1], c[2], img[y * B.W + x]);
     }
@@ -135,7 +140,9 @@ const SpinTex = (() => {
       const L = A.V; // 카메라 좌표 → A의 국소(시선) 좌표
       const ax = L[0] * gx + L[3] * gy + L[6] * gz, ay = L[1] * gx + L[4] * gy + L[7] * gz, az = L[2] * gx + L[5] * gy + L[8] * gz;
       if (az > -0.3) continue; // A에서 보이지 않거나 가장자리
-      const a = sample(img, A.W, A.H, A.cx + ax * A.r, A.cy + ay * A.r);
+      const px = A.cx + ax * A.r, py = A.cy + ay * A.r;
+      if (A.ok) { const xi = Math.round(px), yi = Math.round(py); if (xi < 0 || yi < 0 || xi >= A.W || yi >= A.H || !A.ok[yi * A.W + xi]) continue; }
+      const a = sample(img, A.W, A.H, px, py);
       if (a !== a) continue;
       const b = P[i + 3];
       n++; sa += a; sb += b; saa += a * a; sbb += b * b; sab += a * b;

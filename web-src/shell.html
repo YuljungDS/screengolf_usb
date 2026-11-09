@@ -98,7 +98,7 @@ h3{font-size:13px;margin:14px 0 6px;color:var(--acc2)}
       <div class="row" style="font-size:12px;color:var(--mute)"><span id="camInfo"></span><button class="ghost" id="camReset" style="margin-left:auto;padding:6px 10px">공 다시 찾기</button></div>
       <div class="note" style="margin:6px 0"><b>공 인식</b> — 정해진 거리(0.3~0.5m)에서의 골프공 크기, 윤곽이 원인지, 구 특유의 명암이 있는지로 공을 고릅니다. 흰 종이·매트 흰 줄·큰 흰 원은 무시합니다. <b>처음 한 번 미리보기에서 공을 탭</b>하면 실제 공 크기를 학습해 더 정확해집니다.</div>
       <div class="row"><label style="min-width:auto">클럽</label><select id="sClub"><option value="auto">자동 (티 위 → 드라이버 · 지면 → 7번 아이언)</option><option value="driver">드라이버</option><option value="wood3">3번 우드</option><option value="iron7">7번 아이언</option><option value="pw">피칭웨지</option></select></div>
-      <div class="row"><button class="ghost" id="calBtn">📐 카메라 각도 보정</button><span id="poseInfo" style="font-size:12px;color:var(--mute)"></span></div>
+      <div class="row"><button class="ghost" id="calBtn">📐 카메라 각도 보정</button><button class="ghost" id="snapBtn">📷 화면 저장</button><span id="poseInfo" style="font-size:12px;color:var(--mute)"></span></div>
       <div class="note"><b>설치</b> — 카메라는 측면·비스듬·공 뒤(후방) 어디든 됩니다. 측면이 가장 정확하고, 후방은 공이 멀어지며 작아지는 크기로 거리를 재므로 조금 덜 정확합니다. 공 지름이 화면에서 60px 이상 보이게 가까이(0.4~0.8m) 두세요.<br>
       <b>📐 각도 보정(측면이 아니면 필수)</b> — 카메라를 고정한 뒤, 타격 위치와 그 앞 1~2m(타깃 방향)에 공을 <b>하나씩 바닥에</b> 놓고 [카메라 각도 보정] → ① 타격 위치 공 → ② 앞쪽 공 순서로 탭하세요. 카메라를 옮기면 다시 보정합니다. (설정의 '카메라↔공 거리'는 ① 공까지의 직선거리)<br>
       <b>클럽 자동</b> — 공 아래에 티가 보이면 드라이버, 바닥에 놓인 공이면 7번 아이언으로 계산합니다(스핀 측정 실패 시 기본 스핀·스핀 탐색 범위에 사용).<br><b>스핀 측정(딤플)</b> — 공 표면의 딤플·로고 무늬가 프레임마다 어떻게 돌았는지로 3축 회전(백·사이드·라이플)을 계산합니다. 조건: <b>공 지름이 화면에서 60px 이상</b>(카메라를 가까이), <b>노출을 짧게</b>(밝은 조명), 그리고 <b>fps가 높을수록</b> 큰 스핀까지 측정됩니다(대략 fps×12 rpm까지, 예: 500fps → 6000rpm). 딤플이 잘 안 보이면 공에 검은 점·선을 몇 개 그리면 훨씬 안정적입니다.</div>
@@ -136,6 +136,8 @@ h3{font-size:13px;margin:14px 0 6px;color:var(--acc2)}
       <div class="row"><label>숙임 (°)</label><input type="number" id="sPitch" value="0" step="1" min="-45" max="60"><label style="min-width:auto">기울기 (°)</label><input type="number" id="sRoll" value="0" step="1" min="-30" max="30"></div>
       <input type="hidden" id="sCalM" value="">
       <h3>카메라 · 검출</h3>
+      <div class="row"><label>학습형 공 판별기</label><select id="sNet"><option value="1">사용 (권장)</option><option value="0">끄기</option></select></div>
+      <div class="row"><label>진단 표시</label><select id="sDiag"><option value="1">켜기 — 공이 아닌 후보와 이유 표시</option><option value="0">끄기</option></select></div>
       <div class="row"><label>카메라↔공 거리 (m)</label><input type="number" id="sDist" value="0.4" step="0.01" min="0.2" max="2"><span style="font-size:12px;color:var(--mute)">렌즈~공 중심 직선거리(보통 0.3~0.5m), 줄자로 ±2cm 정확히 — 공 크기 판별·속도·스핀에 직접 영향</span></div>
       <div class="row"><label>카메라 화각(가로, °)</label><input type="number" id="sFov" value="65" step="1" min="30" max="140"><span style="font-size:12px;color:var(--mute)">모르면 그대로. 공을 한 번 탭하면 실제 크기를 학습해 이 값은 쓰지 않음</span></div>
       <div class="row"><label>공 크기 기준</label><span id="sizeInfo" style="font-size:12px;color:var(--mute);flex:1"></span><button class="ghost" id="sizeReset" style="padding:6px 10px">학습 초기화</button><input type="hidden" id="sKf" value=""></div>
@@ -163,6 +165,9 @@ h3{font-size:13px;margin:14px 0 6px;color:var(--acc2)}
 </div>
 <script>
 /*PHYSICS*/
+</script>
+<script>
+/*BALLNET*/
 </script>
 <script>
 /*SPINTEX*/

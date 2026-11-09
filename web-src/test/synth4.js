@@ -49,4 +49,6 @@ if (require.main === module) {
   lockTest('흑백 매트 ρ=0.4 티', setup({ rho: 0.4, tee: true }), extra);
   lockTest('흑백 ρ=0.4 공 아래쪽', setup({ rho: 0.4, shift: [-0.06, -0.06] }), extra);
   lockTest('같은 크기 흰 원판 함께', setup({ rho: 0.4, flatDisk: true }), extra);
+  lockTest('좁은 화각(fpx 1000)', setup({ rho: 0.4, fpx: 1000 }), extra);
+  lockTest('넓은 화각(fpx 300)', setup({ rho: 0.4, fpx: 300 }), extra);
 }
