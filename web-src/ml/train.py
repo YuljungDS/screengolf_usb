@@ -17,8 +17,14 @@ def aug(X):
     if rng.random() < 0.5: X = X[:, :, ::-1]
     return X.reshape(-1, G * G)
 
+import os
 d = [np.load(f) for f in ['d1.npz', 'd2.npz']]
 X = np.concatenate([a['X'] for a in d]); y = np.concatenate([a['y'] for a in d])
+# 실제 카메라 프레임에서 뽑은 데이터(여러 번 반복해 비중을 높임)
+for f in [e for e in os.environ.get('EXTRA', '').split(',') if e]:
+    e = np.load(f); rep = int(os.environ.get('REP', '3'))
+    X = np.concatenate([X] + [e['X']] * rep); y = np.concatenate([y] + [e['y']] * rep)
+RV = [np.load(f) for f in os.environ.get('RVAL', '').split(',') if f]
 v = np.load('dval.npz'); Xv, yv = feats(v['X']), v['y']
 D = X.shape[1] + 3
 H1, H2 = int(sys.argv[2]) if len(sys.argv) > 2 else 32, int(sys.argv[3]) if len(sys.argv) > 3 else 16
@@ -40,6 +46,9 @@ def evaluate():
     acc = ((p > 0.5) == (yv > 0.5)).mean()
     fn = ((p < 0.08) & (yv > 0.5)).sum() / (yv > 0.5).sum()   # 공을 '확실히 아님'으로 버리는 비율(앱의 제외 기준 0.08)
     fp = ((p > 0.5) & (yv < 0.5)).sum() / (yv < 0.5).sum()
+    for rv in RV:
+        _, _, zr = fwd(feats(rv['X']), P); pr = 1 / (1 + np.exp(-zr)); yr = rv['y']
+        print(f'   실제검증: 정확도 {((pr > 0.5) == (yr > 0.5)).mean() * 100:.1f}%  공 평균확률 {pr[yr > 0.5].mean():.2f}  공 놓침(p<0.08) {(pr[yr > 0.5] < 0.08).mean() * 100:.1f}%  오인식(p>0.5) {(pr[yr < 0.5] > 0.5).mean() * 100:.1f}%', flush=True)
     return acc, fn, fp
 
 EP = int(sys.argv[1]) if len(sys.argv) > 1 else 30

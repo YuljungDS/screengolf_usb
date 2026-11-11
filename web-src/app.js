@@ -434,7 +434,7 @@
     // 공 크기 조건: 탭으로 학습한 값이 있으면 그것(좁은 범위), 없으면 화각으로 추정(넓은 범위)
     o.kFocal = s.kf > 0 ? s.kf : 0.5 / Math.tan(s.fov * Math.PI / 360);
     o.useNet = s.useNet; o.netTemplates = templates.length ? templates : null; o.kLearned = s.kf > 0;
-    o.sizeTol = s.kf > 0 ? [0.7, 1.45] : [0.55, 1.8];
+    o.sizeTol = s.kf > 0 ? [0.7, 1.45] : [0.4, 3.0];
     o.clubMax = s.club === 'auto' ? { tee: CLUBS.driver.maxRpm, ground: CLUBS.iron7.maxRpm } : { tee: CLUBS[s.club].maxRpm, ground: CLUBS[s.club].maxRpm };
     if (det) det.set(o); else { camDet?.set(o); vidDet?.set(o); }
     return o;
@@ -472,7 +472,7 @@
       if (out.cand && out.cand.net != null) { c.fillStyle = '#ffe45c'; c.fillText(`공 ${(out.cand.net * 100).toFixed(0)}%`, out.cand.cx + out.cand.r + 4, out.cand.cy); }
     }
     if (out.state === 'search' && camDet && camDet.rExp) { // 예상 공 크기 안내(왼쪽 아래 점선 원)
-      const R = camDet.rExp, tl = camDet.o.sizeTol || [0.55, 1.8];
+      const R = camDet.rExp, tl = camDet.o.sizeTol || [0.4, 3.0];
       c.setLineDash([4, 4]); c.strokeStyle = 'rgba(159,211,255,.9)'; c.lineWidth = 1.5;
       c.beginPath(); c.arc(R * tl[1] + 6, cnv.height - R * tl[1] - 6, R, 0, 7); c.stroke(); c.setLineDash([]);
       c.fillStyle = 'rgba(159,211,255,.9)'; c.font = '11px sans-serif'; c.fillText('예상 공 크기', 4, cnv.height - R * tl[1] * 2 - 12);

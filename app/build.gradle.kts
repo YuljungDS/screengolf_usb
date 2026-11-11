@@ -11,11 +11,22 @@ android {
         applicationId = "com.psg.screengolf"
         minSdk = 26
         targetSdk = 34
-        versionCode = 8
-        versionName = "0.6"
+        versionCode = 9
+        versionName = "0.7"
         ndk {
             // UVC 드라이버(네이티브 라이브러리) 대상 CPU
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
+    }
+
+    // 고정 서명 키: GitHub 자동 빌드마다 임시 디버그 키가 새로 만들어져 서명이 달라지면
+    // 폰에서 '업데이트 설치'가 거부됨(기존 앱과 충돌) → 저장소에 넣은 같은 키로 항상 서명
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug-fixed.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
         }
     }
 
