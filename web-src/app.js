@@ -59,10 +59,45 @@
   // 자동: 티 위 공 → 드라이버, 지면에 놓인 공 → 7번 아이언
   const clubFor = onTee => { const c = S().club; return c === 'auto' ? (onTee ? 'driver' : 'iron7') : c; };
 
+  // ---------- 기록 저장: 폰에 날짜별로 보관, 7일(오늘 포함) 지난 날짜는 자동 삭제 ----------
+  const HIST_KEY = 'psg-shots-v1', KEEP_DAYS = 7;
+  const dayKey = t => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  const dayLabel = k => { const [y, m, d] = k.split('-').map(Number), w = '일월화수목금토'[new Date(y, m - 1, d).getDay()]; return `${m}월 ${d}일 (${w})${k === dayKey(Date.now()) ? ' · 오늘' : ''}`; };
+  const oldestKeep = () => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - (KEEP_DAYS - 1)); return d.getTime(); };
+  // 궤적 점(pts)은 저장하지 않고 요약만 저장 → 그릴 때 처음 한 번 다시 계산
+  function lazyRes(sum, L, env) {
+    const r = Object.assign({}, sum);
+    Object.defineProperty(r, 'pts', { configurable: true, enumerable: false, get() { const full = Golf.simulate(L, env); Object.defineProperty(r, 'pts', { value: full.pts }); return full.pts; } });
+    return r;
+  }
+  function loadShots() {
+    let arr = [];
+    try { arr = JSON.parse(localStorage.getItem(HIST_KEY) || '[]') || []; } catch (e) { arr = []; }
+    const lim = oldestKeep();
+    return arr.filter(o => o && o.time >= lim && o.L && o.sum).map(o => ({ uid: o.uid || o.time, src: o.src, L: o.L, env: o.env || {}, extra: o.extra || {}, time: o.time, day: dayKey(o.time), res: lazyRes(o.sum, o.L, o.env || {}) }));
+  }
+  function saveShots() {
+    const lim = oldestKeep();
+    shots = shots.filter(x => x.time >= lim || x.temp);
+    const data = shots.filter(x => !x.temp).map(x => {
+      const sum = {}; for (const k of Object.keys(x.res)) if (k !== 'pts') sum[k] = x.res[k];
+      return { uid: x.uid, src: x.src, L: x.L, env: x.env, extra: x.extra, time: x.time, sum };
+    });
+    try { localStorage.setItem(HIST_KEY, JSON.stringify(data)); }
+    catch (e) { chip('기록 저장 공간이 부족합니다 — 오래된 날짜를 지워 주세요', 'err'); }
+  }
+  shots = loadShots();
+  let histDay = dayKey(Date.now());
+  saveShots(); // 7일 지난 기록 정리
+
   function launch(L, src, extra = {}) {
-    const res = Golf.simulate(L, envOpts());
-    const shot = { id: shots.length + 1, src, L, res, extra, time: new Date() };
-    shots.push(shot); if (shots.length > 30) shots.shift();
+    const env = envOpts();
+    const res = Golf.simulate(L, env);
+    const now = Date.now();
+    const shot = { uid: now, src, L, env, res, extra, time: now, day: dayKey(now), temp: src === '데모' };
+    if (shot.temp) shots = shots.filter(x => !x.temp); // 시작 화면 데모는 기록하지 않음
+    shots.push(shot);
+    if (!shot.temp) { histDay = shot.day; saveShots(); }
     cur = shot;
     renderStats(); renderHist();
     startAnim();
@@ -141,14 +176,32 @@
   }
   const isOB = r => Math.abs(r.final[0]) > FIELD.w / 2 || r.final[1] > FIELD.l || r.final[1] < 0 || Math.abs(r.landing[0]) > FIELD.w / 2 || r.landing[1] > FIELD.l;
 
+  const dayShots = k => shots.filter(x => !x.temp && x.day === k);
   function renderHist() {
-    $('hBody').innerHTML = shots.slice().reverse().map(s => {
+    // 날짜 선택(최근 7일 중 기록 있는 날 + 오늘)
+    const today = dayKey(Date.now());
+    const days = [...new Set([today, ...shots.filter(x => !x.temp).map(x => x.day)])].sort().reverse();
+    if (!days.includes(histDay)) histDay = today;
+    $('hDay').innerHTML = days.map(k => `<option value="${k}"${k === histDay ? ' selected' : ''}>${dayLabel(k)} · ${dayShots(k).length}샷</option>`).join('');
+    const list = dayShots(histDay);
+    // 그날의 평균(캐리·토탈·속도)
+    const avg = f => list.length ? list.reduce((a, x) => a + f(x), 0) / list.length : 0;
+    $('hSum').textContent = list.length ? `${list.length}샷 · 평균 볼스피드 ${fmt(avg(x => x.L.speed))} m/s · 평균 캐리 ${fmt(dist(avg(x => x.res.carry)))}${du()} · 평균 토탈 ${fmt(dist(avg(x => x.res.total)))}${du()}` : '이 날 기록이 없습니다';
+    $('hBody').innerHTML = list.map((s, i) => [s, i + 1]).reverse().map(([s, n]) => {
       const sp = Golf.describeSpin(s.L.spin);
-      return `<tr data-id="${s.id}" class="${s === cur ? 'sel' : ''}"><td>${s.id}</td><td>${s.src}${s.extra.club ? '<br>' + CLUBS[s.extra.club].name : ''}</td><td>${fmt(s.L.speed)}</td><td>${fmt(s.L.vla)}</td><td>${fmt(sp.back, 0)}/${fmt(sp.side, 0)}</td><td>${fmt(dist(s.res.carry))}</td><td>${fmt(dist(s.res.total))}${isOB(s.res) ? '<br><span style="color:var(--bad)">OB</span>' : ''}</td><td>${fmt(dist(s.res.totalX))}</td><td style="color:${shotShape(s).color}">${shotShape(s).name}</td></tr>`;
+      const tm = new Date(s.time), hm = `${String(tm.getHours()).padStart(2, '0')}:${String(tm.getMinutes()).padStart(2, '0')}`;
+      return `<tr data-id="${s.uid}" class="${s === cur ? 'sel' : ''}"><td>${n}<br><span style="color:var(--mute);font-size:10px">${hm}</span></td><td>${s.src}${s.extra.club ? '<br>' + CLUBS[s.extra.club].name : ''}</td><td>${fmt(s.L.speed)}</td><td>${fmt(s.L.vla)}</td><td>${fmt(sp.back, 0)}/${fmt(sp.side, 0)}</td><td>${fmt(dist(s.res.carry))}</td><td>${fmt(dist(s.res.total))}${isOB(s.res) ? '<br><span style="color:var(--bad)">OB</span>' : ''}</td><td>${fmt(dist(s.res.totalX))}</td><td style="color:${shotShape(s).color}">${shotShape(s).name}</td></tr>`;
     }).join('');
-    $('hBody').querySelectorAll('tr').forEach(tr => tr.onclick = () => { cur = shots.find(s => s.id == tr.dataset.id); renderStats(); renderHist(); startAnim(); });
+    $('hBody').querySelectorAll('tr').forEach(tr => tr.onclick = () => { cur = shots.find(s => s.uid == tr.dataset.id); renderStats(); renderHist(); startAnim(); });
   }
-  $('hClear').onclick = () => { shots = cur ? [cur] : []; renderHist(); draw(); };
+  $('hDay').onchange = () => { histDay = $('hDay').value; renderHist(); draw(); };
+  $('hClear').onclick = () => {
+    const n = dayShots(histDay).length; if (!n) return;
+    if (!confirm(`${dayLabel(histDay)} 기록 ${n}개를 지울까요? 되돌릴 수 없습니다.`)) return;
+    shots = shots.filter(x => x.temp || x.day !== histDay);
+    if (cur && !shots.includes(cur)) cur = null;
+    saveShots(); renderStats(); renderHist(); draw();
+  };
   $('hAll').onchange = () => draw();
 
   // ---------- 수동 샷 ----------
@@ -373,7 +426,7 @@
     if (cur) ballPos = pathUpTo(cur.res, tt ?? 1e9).slice(-1)[0];
     setupCam(ballPos);
     drawGround();
-    if ($('hAll').checked) for (const s of shots) if (s !== cur) drawShot(s, 1e9, false);
+    if ($('hAll').checked) for (const s of (cur && !cur.temp ? dayShots(cur.day) : dayShots(histDay))) if (s !== cur) drawShot(s, 1e9, false);
     if (cur) {
       const last = drawShot(cur, tt ?? 1e9, true);
       if (last) {
@@ -785,5 +838,11 @@
 
   // ---------- 시작 ----------
   renderStats(); renderHist();
-  requestAnimationFrame(() => { resize(); launch({ speed: 70, vla: 11, hla: 0, spin: [2600, 0, 0] }, '데모'); });
+  // 오늘 기록이 있으면 마지막 샷을 보여주고, 없으면 데모 샷
+  requestAnimationFrame(() => {
+    resize();
+    const t = dayShots(dayKey(Date.now()));
+    if (t.length) { cur = t[t.length - 1]; renderStats(); renderHist(); startAnim(); }
+    else launch({ speed: 70, vla: 11, hla: 0, spin: [2600, 0, 0] }, '데모');
+  });
 })();

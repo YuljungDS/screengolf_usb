@@ -70,7 +70,7 @@ h3{font-size:13px;margin:14px 0 6px;color:var(--acc2)}
 </style>
 </head>
 <body>
-<header><h1>⛳ 폰 스크린골프 <b>Tracker</b> <span style="font-size:10px;font-weight:600;color:var(--mut,#8aa);margin-left:4px">v0.7</span> <span id="appBadge" style="display:none;font-size:10px;font-weight:600;color:#0b1510;background:var(--acc2);padding:2px 6px;border-radius:6px;vertical-align:middle">APP</span></h1><span id="chip">대기</span></header>
+<header><h1>⛳ 폰 스크린골프 <b>Tracker</b> <span style="font-size:10px;font-weight:600;color:var(--mut,#8aa);margin-left:4px">v0.8</span> <span id="appBadge" style="display:none;font-size:10px;font-weight:600;color:#0b1510;background:var(--acc2);padding:2px 6px;border-radius:6px;vertical-align:middle">APP</span></h1><span id="chip">대기</span></header>
 <div class="wrap">
   <div id="stage">
     <canvas id="field"></canvas>
@@ -158,8 +158,11 @@ h3{font-size:13px;margin:14px 0 6px;color:var(--acc2)}
     </div>
 
     <div class="pane" id="p-hist">
-      <div class="row"><button class="ghost" id="hClear">기록 지우기</button><label style="min-width:auto;margin-left:auto"><input type="checkbox" id="hAll" checked> 이전 궤적 함께 표시</label></div>
-      <table><thead><tr><th>#</th><th>입력</th><th>속도</th><th>발사각</th><th>백/사이드</th><th>캐리</th><th>토탈</th><th>좌우</th><th>구질</th></tr></thead><tbody id="hBody"></tbody></table>
+      <div class="row"><select id="hDay" style="flex:1"></select><button class="ghost" id="hClear">이 날 지우기</button></div>
+      <div class="row" style="font-size:12px;color:var(--mute)"><span id="hSum" style="flex:1"></span></div>
+      <div class="row" style="font-size:11px;color:var(--mute)">기록은 폰에 날짜별로 저장되며 7일(오늘 포함)이 지난 날짜는 자동으로 지워집니다.</div>
+      <div class="row"><label style="min-width:auto;margin-left:auto"><input type="checkbox" id="hAll" checked> 이전 궤적 함께 표시</label></div>
+      <table><thead><tr><th>#·시각</th><th>입력</th><th>속도</th><th>발사각</th><th>백/사이드</th><th>캐리</th><th>토탈</th><th>좌우</th><th>구질</th></tr></thead><tbody id="hBody"></tbody></table>
     </div>
   </div>
 </div>
