@@ -5,7 +5,7 @@
 import numpy as np, json, sys
 rng = np.random.default_rng(7)
 G, SPAN, W, H = 16, 1.3, 640, 360
-TRUTH = {'box': (431, 223, 48), 'box_clean': (431, 223, 48), 'led': (421, 264, 40), 'noball': None}
+TRUTH = {'box': (431, 223, 48), 'box_clean': (431, 223, 48), 'led': (421, 264, 40), 'noball': None, 'range': (125, 288, 28)}
 
 def crop(img, cx, cy, r):  # JS BallNet.crop과 동일
     out = np.zeros((G, G)); x0 = cx - SPAN * r; y0 = cy - SPAN * r; step = 2 * SPAN * r / G

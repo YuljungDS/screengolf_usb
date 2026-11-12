@@ -612,7 +612,7 @@ const Detector = (() => {
             if (!this.seed && (vf.r < rExp * tol[0] || vf.r > rExp * tol[1])) { D(r, '크기'); continue; }
             r.cx = vf.cx; r.cy = vf.cy; r.r = vf.r;
           }
-          if (this.o.ballNet) { r.net = this.o.ballNet(f, r); if (!this.seed && r.net < 0.08) { D(r, '학습판별'); continue; } } // 학습형 판별기
+          if (this.o.ballNet) { r.net = this.o.ballNet(f, r); if (!this.seed && r.net < 0.3) { D(r, '학습판별'); continue; } } // 학습형 판별기
           bs.push(r);
         }
       }
@@ -636,6 +636,8 @@ const Detector = (() => {
         const drop = why => { D(b, why); bs.splice(i, 1); };
         if (!hs.ok) { if (b.hough) { drop(hs.why === '경계' ? '화면 경계' : '윤곽 약함'); continue; } b.hs = null; continue; }
         b.hs = hs;
+        // 밝기 덩어리 후보도 윤곽이 원이어야 함(신발 앞코처럼 일부만 둥근 흰 물체 제외)
+        if (!b.hough && !this.seed && (hs.inlier < 0.4 || hs.gap > 0.45)) { drop('원 아님(윤곽)'); continue; }
         if (b.hough) {
           b.cx = hs.cx; b.cy = hs.cy; b.r = hs.r;
           if (this.seed) continue;
@@ -650,6 +652,11 @@ const Detector = (() => {
           if (this.o.ballNet) { b.net = this.o.ballNet(f, b); if (b.net < 0.6) { drop('학습판별'); continue; } } // 밝기 덩어리 검사를 거치지 않은 윤곽 후보라 판별기 확신이 필요
         }
       }
+      // 겹친 두 원은 둘 다 공일 수 없음(공 두 개면 중심 간격 ≥ 지름) → 판별기 확신이 뚜렷이 낮은 쪽 제외(공에 겹친 원판·공 일부를 포함한 원)
+      if (!this.seed) for (let i = bs.length - 1; i >= 0; i--) {
+        const a = bs[i]; if (a.net == null) continue;
+        if (bs.some(b => b !== a && b.net != null && b.net > a.net + 0.1 && Math.hypot(a.cx - b.cx, a.cy - b.cy) < 1.2 * Math.max(a.r, b.r))) { D(a, '겹침(다른 공 후보가 더 확실)'); bs.splice(i, 1); }
+      }
       this.noFind = bs.length ? 0 : (this.noFind || 0) + 1;
       this.cands = bs;
       let best = null;
@@ -662,7 +669,7 @@ const Detector = (() => {
           const round = Math.min(1, (b.vin || 0) / 0.85);
           const sizeFit = Math.exp(-0.5 * (Math.log(b.r / rExp) / (wide ? 0.9 : 0.6)) ** 2);
           const shadeFit = b.vsat >= 0.3 ? 0.7 : Math.min(1, 0.25 + b.vshade / 0.06);
-          const netFit = b.net != null ? 0.05 + 0.95 * b.net * b.net : 1; // 학습 판별기(실제 프레임 보강) 비중 강화
+          const netFit = b.net != null ? 0.02 + 0.98 * b.net ** 6 : 1; // 학습 판별기(실제 프레임 보강) 비중 강화
           let sc = round * sizeFit * shadeFit * netFit;
           const hs = b.hs;
           if (hs) {
@@ -688,7 +695,8 @@ const Detector = (() => {
         if (best && bs.length > 1 && this.o.preferGround !== false) {
           const top = bs.filter(b => b.adj > best.adj * 0.05).sort((p, q) => q.adj - p.adj).slice(0, 4);
           for (const b of top) { const tc = this.teeCheck(f, b); b.onTee = tc.onTee; }
-          const ground = top.filter(b => !b.onTee);
+          // 매트 공은 오토티 공과 크기가 비슷하고(±35%) 화면에서 비슷한 높이이거나 더 아래, 판별기도 확신(≥0.8)해야 함 — 구름·하늘 조각 제외
+          const ground = top.filter(b => !b.onTee && b !== best && Math.abs(b.r - best.r) < best.r * 0.35 && b.cy > best.cy - best.r * 2 && (b.net == null || b.net >= 0.8));
           if (best.onTee && ground.length && ground[0].adj >= best.adj * 0.25) { best = ground[0]; best.preferredGround = true; }
         }
       }

@@ -64,7 +64,8 @@ const Hough = (() => {
     // 5) 각 중심에서 반지름 결정: 중심을 향하거나 등지는 경계 픽셀의 거리 분포
     const out = [];
     const nE = ex.length;
-    for (const [, pcx, pcy] of peaks.slice(0, maxN * 3)) {
+    // 매트·잔디 결처럼 잔 경계가 많으면 표 많은 봉우리가 넘쳐 공이 밀림 → 넉넉히 보고 원둘레 지지율로 다시 고름
+    for (const [, pcx, pcy] of peaks.slice(0, maxN * 6)) {
       const H = new Float32Array(rMax + 3);
       for (let k = 0; k < nE; k++) {
         const dx = ex[k] - pcx, dy = ey[k] - pcy, d = Math.hypot(dx, dy);
@@ -78,10 +79,12 @@ const Hough = (() => {
         const s = (H[r - 1] + H[r] + H[r + 1]) / (2 * Math.PI * r); // 원둘레 대비 경계 비율
         if (s > best) { best = s; br = r; }
       }
-      if (br && best > 0.25) out.push({ cx: pcx, cy: pcy, r: br, support: Math.min(1, best) });
-      if (out.length >= maxN) break;
+      if (br && best > 0.25) out.push({ cx: pcx, cy: pcy, r: br, support: Math.min(1, best), rank: out.length });
     }
-    return out;
+    // 표 많은 순 상위 maxN + 원둘레 지지율 높은 순 상위 maxN/2 (중복 제외)
+    const byVote = out.slice(0, maxN);
+    const bySup = out.slice(maxN).sort((a, b) => b.support - a.support).slice(0, Math.ceil(maxN / 2));
+    return byVote.concat(bySup);
   }
   return { circles };
 })();
@@ -89,7 +92,7 @@ if (typeof module !== 'undefined') module.exports = Hough;
 
 // ===== 후보 원 평가: 그래디언트 윤곽(원형) + 구(球) 음영 + 딤플 질감 =====
 // 밝기 임계와 무관 — 흰 바탕 위 흰 공, LED·하늘(평평·포화)·박스 모서리(직선) 구분용
-Hough.score = function (f, c, opts = {}) {
+Hough.score1 = function (f, c, opts = {}) {
   const { gray, w, h } = f;
   const at = (x, y) => { // 쌍선형 보간
     x = Math.max(0, Math.min(w - 1.001, x)); y = Math.max(0, Math.min(h - 1.001, y));
@@ -198,4 +201,17 @@ Hough.score = function (f, c, opts = {}) {
   for (let k = 0; k < 48; k++) { const a = 2 * Math.PI * k / 48; const v = at(cx + Math.cos(a) * r * 1.35, cy + Math.sin(a) * r * 1.35); outM += v; outN++; }
   outM /= outN;
   return { ok: true, cx, cy, r, inlier, gap, lineFrac, edge: medMag, shadeAmp, r2, resid, mean, outM, sat: cnt ? sat / cnt : 0 };
+};
+
+// 두 번 맞춤: 첫 결과(중심·반지름)에서 다시 광선을 쏴 더 나은 원을 고름(시작 원이 공보다 작거나 클 때 안쪽 음영 경계에 걸리는 것 방지)
+Hough.score = function (f, c, opts = {}) {
+  const a = Hough.score1(f, c, opts);
+  if (!a.ok) return a;
+  const q = v => v.ok ? v.inlier * (1 - v.gap) : -1;
+  let best = a;
+  for (const k of [1, 1.12]) {
+    const b = Hough.score1(f, { cx: best.cx, cy: best.cy, r: best.r * k }, opts);
+    if (q(b) > q(best) + 0.02) best = b;
+  }
+  return best;
 };
