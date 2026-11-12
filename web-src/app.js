@@ -823,7 +823,7 @@
       }
       if (!vEl.ended) vEl.requestVideoFrameCallback(cb);
     };
-    vEl.onended = () => { vRun = false; $('vgo').textContent = '분석 시작'; $('vbar').style.width = '100%'; $('vmsg').textContent = found ? `완료 — 샷 ${found}개 검출` : `완료 — 샷을 찾지 못했습니다 (${vidDet.msg})`; };
+    vEl.onended = () => { { const p = vidDet && vidDet.flush(); if (p) { found++; fromDetector(p, '영상'); } } vRun = false; $('vgo').textContent = '분석 시작'; $('vbar').style.width = '100%'; $('vmsg').textContent = found ? `완료 — 샷 ${found}개 검출` : `완료 — 샷을 찾지 못했습니다 (${vidDet.msg})`; };
     vEl.requestVideoFrameCallback(cb);
     try { await vEl.play(); } catch (e) { $('vmsg').textContent = '재생 실패: ' + e.message; vRun = false; }
   };
