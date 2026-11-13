@@ -252,7 +252,74 @@ class MainActivity : AppCompatActivity() {
             }
             "stop" -> stopCamera()
             "save" -> saveImage(m.optString("name", "screengolf.png"), m.optString("data"))
+            "exposure" -> {
+                expReq = m
+                if (state == "open") camExec { applyExposure() } else sendExposure(JSONObject().put("pending", true))
+            }
         }
+    }
+
+    // ---------- 노출 고정(번짐 줄무늬 속도 측정용) ----------
+    // 웹앱 → {cmd:"exposure", mode:"auto"|"manual", time:초, gain:0~100(-1=유지)}
+    // 앱 → {type:"exposure", supported, mode, time(초, 카메라가 실제로 보고한 값), min, max, gain...}
+    // UVC 절대 노출 시간 단위 = 0.0001초. 라이브러리 버전에 따라 함수가 없을 수 있어 리플렉션으로 호출
+    @Volatile private var expReq: JSONObject? = null
+    private val camThread = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private fun camExec(f: () -> Unit) { camThread.execute { try { f() } catch (e: Throwable) { Log.w(TAG, "exposure", e) } } }
+
+    private fun uvcControl(): Any? = try {
+        val h = helper ?: return null
+        h.javaClass.getMethod("getUVCControl").invoke(h)
+    } catch (e: Throwable) { null }
+
+    private fun call(o: Any, name: String, vararg args: Int): Any? {
+        val m = o.javaClass.methods.firstOrNull { it.name == name && it.parameterTypes.size == args.size } ?: return null
+        return m.invoke(o, *args.map { it as Any }.toTypedArray())
+    }
+
+    private fun applyExposure() {
+        val req = expReq ?: return
+        val res = JSONObject()
+        val uc = uvcControl()
+        if (uc == null) { res.put("supported", false).put("error", "이 카메라 라이브러리에서 노출 제어를 쓸 수 없습니다"); sendExposure(res); return }
+        val lim = try { call(uc, "updateExposureTimeAbsoluteLimit") as? IntArray } catch (e: Throwable) { null }
+        val absOk = try { call(uc, "isExposureTimeAbsoluteEnable") as? Boolean ?: (lim != null) } catch (e: Throwable) { lim != null }
+        if (lim != null) res.put("min", lim[0] / 10000.0).put("max", lim[1] / 10000.0)
+        val manual = req.optString("mode") == "manual"
+        try {
+            if (manual) {
+                if (!absOk) throw Exception("카메라가 노출 시간 직접 설정(UVC 절대 노출)을 지원하지 않습니다")
+                // 수동 노출(1) → 안 되면 셔터 우선(4)
+                try { call(uc, "setAutoExposureMode", 1) } catch (e: Throwable) {}
+                var mode = try { call(uc, "getAutoExposureMode") as? Int ?: -1 } catch (e: Throwable) { -1 }
+                if (mode != 1 && mode != 4) { try { call(uc, "setAutoExposureMode", 4) } catch (e: Throwable) {}; mode = try { call(uc, "getAutoExposureMode") as? Int ?: -1 } catch (e: Throwable) { -1 } }
+                try { call(uc, "setAutoExposurePriority", 0) } catch (e: Throwable) {} // 노출 때문에 fps가 떨어지지 않게
+                var units = Math.round(req.optDouble("time", 0.001) * 10000).toInt()
+                if (lim != null) units = units.coerceIn(lim[0], lim[1])
+                units = units.coerceAtLeast(1)
+                call(uc, "setExposureTimeAbsolute", units)
+                val g = req.optInt("gain", -1)
+                if (g >= 0) try { call(uc, "setGainPercent", g.coerceIn(0, 100)) } catch (e: Throwable) {}
+                Thread.sleep(150)
+                val back = try { call(uc, "getExposureTimeAbsolute") as? Int ?: units } catch (e: Throwable) { units }
+                res.put("supported", true).put("mode", if (mode == 1 || mode == 4) "manual" else "unknown").put("aeMode", mode)
+                    .put("time", back / 10000.0).put("asked", units / 10000.0)
+            } else {
+                try { call(uc, "setAutoExposureMode", 2) } catch (e: Throwable) {}
+                var mode = try { call(uc, "getAutoExposureMode") as? Int ?: -1 } catch (e: Throwable) { -1 }
+                if (mode != 2 && mode != 8) { try { call(uc, "setAutoExposureMode", 8) } catch (e: Throwable) {}; mode = try { call(uc, "getAutoExposureMode") as? Int ?: -1 } catch (e: Throwable) { -1 } }
+                res.put("supported", true).put("mode", "auto").put("aeMode", mode)
+            }
+            try { res.put("gain", call(uc, "getGainPercent") as? Int ?: -1) } catch (e: Throwable) {}
+        } catch (e: Throwable) {
+            res.put("supported", false).put("error", (e.cause ?: e).message ?: e.toString())
+        }
+        sendExposure(res)
+    }
+
+    private fun sendExposure(o: JSONObject) {
+        val text = o.put("type", "exposure").toString()
+        main.post { safe { port?.postMessage(WebMessageCompat(text)) } }
     }
 
     private fun sendStatus(msg: String?, fps: Double = 0.0) {
@@ -491,6 +558,7 @@ class MainActivity : AppCompatActivity() {
         if (surfaceReady) safe { h.addSurface(surfaceView.holder.surface, false) }
         state = "open"
         sendStatus("USB 카메라 열림 (${frameW}×${frameH}) · 모드: ${ps ?: "기본"}")
+        if (expReq != null) camExec { Thread.sleep(400); applyExposure() } // 다시 열 때 노출 설정 재적용
     }
 
     // 카메라 스레드에서 호출됨

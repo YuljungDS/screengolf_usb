@@ -5,6 +5,7 @@
 const Detector = (() => {
   const ST = typeof SpinTex !== 'undefined' ? SpinTex : require('./spintex.js');
   const HG = typeof Hough !== 'undefined' ? Hough : require('./hough.js');
+  const SK = typeof Streak !== 'undefined' ? Streak : require('./streak.js');
   let BN = null; try { BN = typeof BallNet !== 'undefined' ? BallNet : require('./ballnet.js'); } catch (e) { BN = null; }
   const M3 = {
     norm: a => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; },
@@ -111,7 +112,7 @@ const Detector = (() => {
     constructor(opts = {}) {
       this.o = Object.assign({
         ballD: 0.04267, camDist: 1.0, dir: 'auto', thr: 0, diffThr: 30,
-        stableFrames: 8, maxTrackTime: 0.3, useDepth: true, maxHla: 35, spinMode: 'auto', maxRpm: 12000,
+        stableFrames: 8, maxTrackTime: 0.3, expTime: 0, tRow: null, useDepth: true, maxHla: 35, spinMode: 'auto', maxRpm: 12000,
         camM: null, // 카메라 자세(월드←카메라 3x3). null이면 '측면 수직' 가정(공 진행 방향으로 자동 판별)
         // 공 크기 조건: 예상 반지름 = kFocal·화면폭·D / (2·거리). kFocal = 초점거리(px)/화면폭 — 화각 65°면 0.785
         kFocal: 0.785, sizeTol: [0.4, 3.0], useHough: true, minInlier: 0.5, minShade: 0.035,
@@ -707,6 +708,8 @@ const Detector = (() => {
     process(f) {
       const { gray, w, h, t } = f;
       // 임계값은 공 탐색 단계에서만 다시 계산(준비·추적 단계는 고정)
+      if (this.lastT != null && t > this.lastT) { const d = t - this.lastT; this.dtEst = this.dtEst ? this.dtEst * 0.95 + d * 0.05 : d; }
+      this.lastT = t;
       const thr = (this.state === 'search' || !this.lastThr) ? this.threshold(gray) : this.lastThr;
       this.lastThr = thr;
       let shot = null;
@@ -735,6 +738,13 @@ const Detector = (() => {
           this.msg = `준비 완료 (${tee.onTee ? '티 위 공' : '지면 공'}) — 스윙하세요${this.rest.sat > 0.5 ? ' · ⚠ 공이 하얗게 포화됨: 조명/노출을 낮춰야 스핀 측정 가능' : ''}`;
         }
       } else if (this.state === 'ready') {
+        // 줄무늬 모드: 임팩트 판정이 1~2프레임 늦게 나므로 최근 2프레임을 보관(공이 찍힌 프레임이 그 안에 있음)
+        if (this.o.expTime > 0) {
+          const pf = this.prevFrames || (this.prevFrames = []);
+          const slot = pf.length >= 2 ? pf.shift() : { gray: new Uint8Array(gray.length) };
+          if (slot.gray.length !== gray.length) slot.gray = new Uint8Array(gray.length);
+          slot.gray.set(gray); slot.t = t; pf.push(slot);
+        }
         const frac = this.discFrac(f, thr);
         // 임팩트 판단: ① 정지 위치에서 공이 사라짐(측면 촬영) ② 공이 그 자리에서 작아지거나 커짐·조금 이동(후방/정면 촬영)
         let moved = frac < this.restFrac * 0.4;
@@ -747,6 +757,9 @@ const Detector = (() => {
         }
         if (moved) {
           this.state = 'track'; this.tImpact = t; this.track = []; this.miss = 0; this.dirSign = this.o.dir === 'right' ? 1 : this.o.dir === 'left' ? -1 : 0;
+          // 번짐 줄무늬 측정용: 판정 직전 2프레임(현재 포함) + 이후 2프레임
+          this.skFrames = this.o.expTime > 0 ? (this.prevFrames || []).map(p => ({ gray: new Uint8Array(p.gray), t: p.t })) : null;
+          if (this.skFrames && !this.skFrames.length) this.skFrames.push({ gray: new Uint8Array(gray), t });
           this.msg = '임팩트 감지 — 추적 중';
           this.trackFrame(f, thr);
         } else if (this.rest.onTee && this.o.preferGround !== false && ++this.sceneN % 10 === 0) {
@@ -768,11 +781,12 @@ const Detector = (() => {
           } else this.chN = 0;
         }
       } else if (this.state === 'track') {
+        if (this.skFrames && this.skFrames.length < 4) this.skFrames.push({ gray: new Uint8Array(gray), t });
         this.trackFrame(f, thr);
         const done = (this.track.length && this.miss >= 3) || t - this.tImpact > this.o.maxTrackTime;
         if (done) {
           // 결과를 바로 내지 않고, 원래 자리에 공이 그대로 있는지 먼저 확인(연습 스윙·명암 변화·몸에 잠깐 가려짐)
-          this.pending = this.track.length >= 2 ? this.computeShot(w, h) : null;
+          this.pending = this.shotFromTrackOrStreak(w, h);
           this.state = 'verify'; this.tVerify = t; this.presN = 0; this.absN = 0;
           this.msg = '공이 그 자리에 있는지 확인 중…';
         }
@@ -821,6 +835,44 @@ const Detector = (() => {
       return n ? s / n : 0;
     }
 
+    // 샷 계산: 공 위치가 3프레임 이상 잡히면 위치 변화로, 아니면(빠른 공이 0~1프레임만 보임) 번짐 줄무늬로
+    shotFromTrackOrStreak(w, h) {
+      let sk = null;
+      if (this.skFrames && this.o.expTime > 0) {
+        const fps = this.dtEst ? 1 / this.dtEst : 120;
+        const dir = this.o.dir === 'right' ? 1 : this.o.dir === 'left' ? -1 : 0; // 추적이 클럽을 따라가 정한 방향은 믿지 않음
+        for (const fr of this.skFrames) {
+          let m = null;
+          try { m = SK.measure({ gray: fr.gray, w, h }, this.ref, this.rest, { texp: this.o.expTime, fps, ballLum: this.ballLum, tRow: this.o.tRow, dir }); } catch (e) { console.warn(e); }
+          if (m && m.ok && (!sk || m.nres < sk.nres)) sk = Object.assign(m, { t: fr.t });
+          if (m && !sk) this.lastStreak = m;
+        }
+        this.skFrames = null;
+      }
+      this.lastStreak = sk || this.lastStreak || null;
+      const useTrack = this.track.length >= 3;
+      // 노출 고정(줄무늬 모드)에서 위치가 2프레임 이하이고 줄무늬도 없으면 결과를 내지 않음(클럽·잔상을 공으로 잡은 2점 계산은 엉터리가 되기 쉬움)
+      if (!useTrack && !sk && this.o.expTime > 0) return { ok: false, reason: '공이 화면에 충분히 찍히지 않았습니다(줄무늬도 못 찾음) — 카메라를 공에서 더 멀리(가로 0.7m 이상) 두면 잘 잡힙니다', frames: this.track.length };
+      if (useTrack || !sk) {
+        const shot = this.track.length >= 2 ? this.computeShot(w, h) : null;
+        // 위치 추적 결과가 수상하면(방향각이 한계에 닿음 = 클럽·잔상을 따라감, 속도 비정상) 줄무늬 결과로, 없으면 실패
+        const odd = !shot || !shot.ok || Math.abs(shot.hla) >= this.o.maxHla - 0.5 || shot.speed < 5;
+        if (!(odd && this.o.expTime > 0)) { if (shot && sk) shot.streak = this.streakInfo(sk, w); return shot; }
+        if (!sk) return { ok: false, reason: '공 궤적이 이상합니다(클럽·몸을 따라간 것으로 보임) — 줄무늬도 못 찾음', frames: this.track.length };
+      }
+      // 줄무늬 결과로 두 점(정지 위치, Δ초 뒤 위치)을 만들어 기존 계산(카메라 자세·발사각·방향각)에 넣음
+      const keep = this.track, keepDir = this.dirSign, D = 0.002, r = this.rest;
+      this.dirSign = this.o.dir === 'right' ? 1 : this.o.dir === 'left' ? -1 : (Math.sign(sk.vx) || 1); // 줄무늬 방향
+      this.track = [{ u: r.cx, v: r.cy, r: r.r, t: 0, edge: r.edge }, { u: r.cx + sk.vx * D, v: r.cy + sk.vy * D, r: r.r, t: D, edge: r.edge }];
+      let shot = null;
+      try { shot = this.computeShot(w, h); } finally { this.track = keep; if (!shot) this.dirSign = keepDir; }
+      if (shot) { shot.speedFrom = 'streak'; shot.frames = 1; shot.streak = this.streakInfo(sk, w); }
+      return shot;
+    }
+    streakInfo(sk, w) {
+      return { L: sk.L, tRow: sk.tRow, nres: sk.nres, exp: this.o.expTime, speedImg: sk.speedPx * this.o.ballD / (2 * this.rest.r) };
+    }
+
     // 영상이 끝났을 때 확인 중이던 샷 내보내기(공이 사라졌는지 볼 프레임이 없을 때)
     flush() {
       if (this.state === 'verify' && this.pending && this.presN === 0) { const s = this.pending; this.pending = null; this.lastShot = s; this.state = 'cool'; return s; }
@@ -833,6 +885,11 @@ const Detector = (() => {
       this.ref = new Uint8Array(gray);
       this.restFrac = this.discFrac(f, thr);
       this.restPatch = this.patch(f, this.rest.cx, this.rest.cy, this.rest.r);
+      { // 공 평균 밝기(번짐 줄무늬 모델용)
+        const r = this.rest; let sm = 0, n = 0;
+        for (let y = -r.r; y <= r.r; y++) for (let x = -r.r; x <= r.r; x++) if (x * x + y * y < r.r * r.r * 0.7) { const xx = Math.round(r.cx + x), yy = Math.round(r.cy + y); if (xx >= 0 && yy >= 0 && xx < f.w && yy < f.h) { sm += gray[yy * f.w + xx]; n++; } }
+        this.ballLum = n ? sm / n : 200;
+      }
       this.sceneRef = new Uint8Array(gray);
       this.readyN = 0; this.moveN = 0; this.sceneN = 0; this.chN = 0; this.chPrev = null;
       this.state = 'ready';
@@ -1022,7 +1079,7 @@ const Detector = (() => {
       if (te && te.conf >= 0.3 && te.links >= 3) { /* 쌍 1개뿐이면 일관성 검사가 안 되므로 버림 */ spin = toRpm(te.w); spinFrom = 'texture'; spinConf = te.conf; spinMax = te.maxRpm; }
       else if (markerSpin && o.spinMode === 'marker') { spin = markerSpin; spinFrom = 'marker'; } // 자동 모드는 텍스처(마커도 텍스처로 처리)만 신뢰
       const dtTot = tr[tr.length - 1].t - tr[0].t;
-      const ok = speed > 3 && speed < 95 && vla > -10 && vla < 70;
+      const ok = speed > 3 && speed < 95 && vla > -10 && vla < 85; // 웨지 로브샷은 70~80°까지
       return { ok, reason: ok ? '' : `비정상 값 (속도 ${speed.toFixed(1)} m/s, 발사각 ${vla.toFixed(1)}°)`, onTee: !!this.rest.onTee, teeScore: this.rest.teeScore || 0, posed: !!o.camM, speed, vla, hla, spin, spinFrom, spinConf, spinMax, texPairs: te ? te.pairs : 0, frames: tr.length, spinPairs: ws.length, dtTot, fpx };
     }
   }

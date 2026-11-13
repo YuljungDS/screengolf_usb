@@ -5,7 +5,7 @@
   const YD = 0.9144;
 
   // ---------- 설정 ----------
-  const SKEYS = ['sNet', 'sDiag', 'sFov', 'sKf', 'sClub', 'sCamMode', 'sPhi', 'sPitch', 'sRoll', 'sCalM', 'sHand', 'sSpinMode', 'sDist', 'sDir', 'sThr', 'sDiff', 'sDepth', 'sProc', 'sTsFix', 'sCal', 'sDefSpin', 'sSurf', 'sWind', 'sWindDir', 'sAlt', 'sTemp', 'sUnit'];
+  const SKEYS = ['sNet', 'sDiag', 'sFov', 'sKf', 'sClub', 'sCamMode', 'sPhi', 'sPitch', 'sRoll', 'sCalM', 'sHand', 'sSpinMode', 'sDist', 'sDir', 'sThr', 'sDiff', 'sDepth', 'sProc', 'sTsFix', 'sCal', 'sDefSpin', 'sSurf', 'sWind', 'sWindDir', 'sAlt', 'sTemp', 'sUnit', 'sExp', 'sGain'];
   try { const saved = JSON.parse(localStorage.getItem('psg-settings') || '{}'); for (const k of SKEYS) if (saved[k] != null) $(k).value = saved[k]; } catch (e) { }
   const S = () => ({
     hand: $('sHand').value, spinMode: $('sSpinMode').value, club: $('sClub').value,
@@ -14,6 +14,7 @@
     camMode: $('sCamMode').value, phi: +$('sPhi').value || 0, pitch: +$('sPitch').value || 0, roll: +$('sRoll').value || 0, calM: $('sCalM').value,
     dist: +$('sDist').value || 1, dir: $('sDir').value, thr: +$('sThr').value || 0, diff: +$('sDiff').value || 30,
     depth: $('sDepth').value === '1', proc: +$('sProc').value, cal: +$('sCal').value || 1, defSpin: +$('sDefSpin').value || 0,
+    exp: $('sExp').value, gain: $('sGain').value === '' ? -1 : +$('sGain').value,
     surf: $('sSurf').value, wind: +$('sWind').value || 0, windDir: +$('sWindDir').value, alt: +$('sAlt').value || 0, temp: +$('sTemp').value, unit: $('sUnit').value,
   });
   for (const k of SKEYS) $(k).addEventListener('change', () => {
@@ -118,6 +119,10 @@
       spinNote = '측정 실패 → 백스핀 추정·사이드 0 (구질은 출발 방향만 반영)';
       const fps = sh.frames > 1 && sh.dtTot > 0 ? (sh.frames - 1) / sh.dtTot : 0;
       if (fps) spinNote += ` · ${fps.toFixed(0)}fps에서는 약 ${(75 / 360 * 60 * fps).toFixed(0)}rpm 이하만 측정 가능`;
+    }
+    if (sh.speedFrom === 'streak') {
+      spinNote += ` · 속도: 번짐 줄무늬(1프레임, 노출 1/${Math.round(1 / sh.streak.exp)}초, 줄무늬 ${sh.streak.L.toFixed(0)}px)`;
+      if (sh.streak.tRow != null && sh.streak.nres < 0.3 && camDet && camDet.o.tRow == null) tRowAdd(sh.streak.tRow);
     }
     const L = { speed: sh.speed * s.cal, vla: sh.vla, hla: sh.hla, spin };
     const club = clubFor(sh.onTee);
@@ -482,14 +487,46 @@
       }
     };
   }
+  // ---------- 노출 고정 (USB 카메라 앱) ----------
+  const EXP = { ok: false, mode: 'auto', time: 0 };
+  function sendExposure() {
+    if (!NATIVE.port || !NATIVE.run) return;
+    const s = S();
+    NATIVE.send({ cmd: 'exposure', mode: s.exp === 'auto' ? 'auto' : 'manual', time: s.exp === 'auto' ? 0 : +s.exp, gain: s.gain });
+    $('expInfo').textContent = '카메라에 노출 설정을 보내는 중…';
+  }
+  function onExposure(m) {
+    if (m.pending) { $('expInfo').textContent = '카메라를 시작하면 노출을 설정합니다'; return; }
+    EXP.ok = !!m.supported; EXP.mode = m.mode || 'auto'; EXP.time = +m.time || 0;
+    const frac = t => t > 0 ? `1/${Math.round(1 / t)}초` : '?';
+    $('expInfo').textContent = !m.supported ? `노출 고정 불가: ${m.error || '카메라가 지원하지 않음'} — 줄무늬 측정 꺼짐`
+      : m.mode === 'manual' ? `노출 고정됨: 카메라 보고 ${frac(EXP.time)}${m.asked && Math.abs(m.asked - EXP.time) > 1e-5 ? ` (요청 ${frac(m.asked)})` : ''}${m.min ? ` · 가능 범위 ${frac(m.min)}~${frac(m.max)}` : ''}${m.gain >= 0 ? ` · 게인 ${m.gain}%` : ''} — 줄무늬 속도 측정 켜짐`
+      : '자동 노출 — 줄무늬 속도 측정 꺼짐(위치 추적만)';
+    detOpts();
+  }
+  // 롤링 셔터 행 읽기 시간: 카메라·해상도마다 고정값 → 줄무늬 샷에서 추정한 값의 중앙값을 학습
+  const trowKey = () => `psg-trow-${$('camRes').value}-${S().proc}`;
+  function tRowList() { try { return JSON.parse(localStorage.getItem(trowKey()) || '[]'); } catch (e) { return []; } }
+  function tRowLearned() { const a = tRowList().slice().sort((p, q) => p - q); return a.length >= 3 ? a[a.length >> 1] : null; }
+  function tRowAdd(v) { const a = tRowList(); a.push(v); while (a.length > 9) a.shift(); try { localStorage.setItem(trowKey(), JSON.stringify(a)); } catch (e) { } showTRow(); detOpts(); }
+  function showTRow() { const a = tRowList(), L = tRowLearned(); $('trowInfo').textContent = L != null ? `롤링 셔터 행 읽기 시간 ${(L * 1e6).toFixed(1)}µs (샷 ${a.length}개로 학습, 고정 사용)` : `롤링 셔터 행 읽기 시간: 줄무늬 샷 ${a.length}/3개 후 자동 학습`; }
+  $('trowReset').onclick = () => { try { localStorage.removeItem(trowKey()); } catch (e) { } showTRow(); detOpts(); };
+  $('sExp').addEventListener('change', () => { sendExposure(); detOpts(); });
+  $('sGain').addEventListener('change', () => sendExposure());
+  showTRow();
+
   function detOpts(det) {
     const s = S(), o = { camDist: s.dist, dir: s.dir, thr: s.thr, diffThr: s.diff, useDepth: s.depth, spinMode: s.spinMode, camM: camMatrix() };
     // 공 크기 조건: 탭으로 학습한 값이 있으면 그것(좁은 범위), 없으면 화각으로 추정(넓은 범위)
     o.kFocal = s.kf > 0 ? s.kf : 0.5 / Math.tan(s.fov * Math.PI / 360);
     o.useNet = s.useNet; o.netTemplates = templates.length ? templates : null; o.kLearned = s.kf > 0;
     o.sizeTol = s.kf > 0 ? [0.7, 1.45] : [0.4, 3.0];
+    // 노출 고정: 카메라가 실제로 보고한 노출 시간을 써야 속도가 맞음(요청값과 다를 수 있음)
+    o.expTime = s.exp !== 'auto' && EXP.ok && EXP.mode === 'manual' ? EXP.time : 0;
+    o.tRow = tRowLearned();
     o.clubMax = s.club === 'auto' ? { tee: CLUBS.driver.maxRpm, ground: CLUBS.iron7.maxRpm } : { tee: CLUBS[s.club].maxRpm, ground: CLUBS[s.club].maxRpm };
-    if (det) det.set(o); else { camDet?.set(o); vidDet?.set(o); }
+    const ov = Object.assign({}, o, { expTime: 0 }); // 영상 파일은 노출 시간을 모름 → 줄무늬 측정 안 함
+    if (det) det.set(det === vidDet ? ov : o); else { camDet?.set(o); vidDet?.set(ov); }
     return o;
   }
   // 카메라 자세: 측면 자동(null) / 두 공 보정값 / 직접 입력(방위·숙임·기울기)
@@ -732,6 +769,7 @@
     if (typeof d === 'string') {
       if (d.startsWith('b64:')) return nativeFrame(b64ToBuf(d.slice(4)));
       let m; try { m = JSON.parse(d); } catch (e) { return; }
+      if (m.type === 'exposure') { onExposure(m); return; }
       if (m.type === 'saved') { $('camMsg').textContent = m.error ? `저장 실패: ${m.error}` : `저장했습니다: ${m.path} — 이 사진을 Claude 대화창에 올려 주세요`; return; }
       if (m.type === 'status') {
         if (Array.isArray(m.sizes) && m.sizes.length) { NATIVE.sizes = m.sizes; onCamSel(); }
@@ -739,6 +777,7 @@
         if (!NATIVE.run) $('camInfo').textContent = NATIVE.info;
         if (m.msg) $('camMsg').textContent = m.msg;
         if (m.state === 'error') { camWarn(m.msg); chip('USB 카메라 오류', 'err'); }
+        if (m.state === 'open' && NATIVE.run && !NATIVE.expSent) { NATIVE.expSent = true; if (S().exp !== 'auto') sendExposure(); }
         if (m.state === 'closed' && NATIVE.run) { NATIVE.run = false; camRun = false; $('camStart').textContent = '카메라 시작'; chip('대기'); }
       }
       return;
@@ -748,7 +787,7 @@
   function startNative() {
     const [w, h] = $('camRes').value.split('x').map(Number);
     camDet = new Detector.ShotDetector({}); detOpts(camDet);
-    NATIVE.ts = null; NATIVE.n = 0; NATIVE.tf = performance.now();
+    NATIVE.ts = null; NATIVE.n = 0; NATIVE.tf = performance.now(); NATIVE.expSent = false;
     NATIVE.run = true; camRun = true;
     $('camStart').textContent = '정지'; chip('USB 카메라 연결 중', 'live');
     $('camMsg').textContent = 'USB 카메라 권한을 허용해 주세요…';

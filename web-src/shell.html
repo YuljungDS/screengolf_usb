@@ -70,7 +70,7 @@ h3{font-size:13px;margin:14px 0 6px;color:var(--acc2)}
 </style>
 </head>
 <body>
-<header><h1>⛳ 폰 스크린골프 <b>Tracker</b> <span style="font-size:10px;font-weight:600;color:var(--mut,#8aa);margin-left:4px">v0.10</span> <span id="appBadge" style="display:none;font-size:10px;font-weight:600;color:#0b1510;background:var(--acc2);padding:2px 6px;border-radius:6px;vertical-align:middle">APP</span></h1><span id="chip">대기</span></header>
+<header><h1>⛳ 폰 스크린골프 <b>Tracker</b> <span style="font-size:10px;font-weight:600;color:var(--mut,#8aa);margin-left:4px">v0.11</span> <span id="appBadge" style="display:none;font-size:10px;font-weight:600;color:#0b1510;background:var(--acc2);padding:2px 6px;border-radius:6px;vertical-align:middle">APP</span></h1><span id="chip">대기</span></header>
 <div class="wrap">
   <div id="stage">
     <canvas id="field"></canvas>
@@ -146,6 +146,11 @@ h3{font-size:13px;margin:14px 0 6px;color:var(--acc2)}
       <div class="row"><label>변화 임계값</label><input type="number" id="sDiff" value="30" min="5" max="120"></div>
       <div class="row"><label>깊이(좌우) 추정</label><select id="sDepth"><option value="1">공 크기 변화로 추정</option><option value="0">사용 안 함 (방향 0°)</option></select></div>
       <div class="row"><label>처리 해상도(가로)</label><select id="sProc"><option>320</option><option selected>480</option><option>640</option></select></div>
+      <h3>노출 고정 · 번짐 줄무늬 속도 측정</h3>
+      <div class="row"><label>노출 시간</label><select id="sExp"><option value="auto" selected>자동 (카메라가 정함)</option><option value="0.002">1/500 초</option><option value="0.001">1/1000 초 (권장)</option><option value="0.0005">1/2000 초</option><option value="0.00025">1/4000 초</option></select></div>
+      <div class="row"><label>게인(밝기 증폭)</label><input type="number" id="sGain" value="-1" min="-1" max="100" step="5"><span style="font-size:12px;color:var(--mute)">-1 = 그대로, 0~100%. 노출을 짧게 하면 화면이 어두워지므로 높여 줌(잡음 증가)</span></div>
+      <div class="row" style="font-size:12px;color:var(--mute)"><span id="expInfo" style="flex:1">USB 카메라(앱)에서만 동작합니다. 노출을 고정하면 공이 화면에 한 프레임만 찍혀도 번진 줄무늬 길이 = 속도 × 노출 시간으로 속도·발사각을 계산합니다.</span></div>
+      <div class="row" style="font-size:12px;color:var(--mute)"><span id="trowInfo" style="flex:1"></span><button class="ghost" id="trowReset">행 읽기 시간 다시 학습</button></div>
       <div class="row"><label>USB 타임스탬프 보정</label><select id="sTsFix"><option value="1">켜기 (권장)</option><option value="0">끄기</option></select></div>
       <div class="row"><label>속도 보정 계수</label><input type="number" id="sCal" value="1.00" step="0.01" min="0.5" max="1.5"></div>
       <div class="row"><label>스핀 측정 방식</label><select id="sSpinMode"><option value="auto">자동 (딤플·로고·마커 무늬)</option><option value="texture">표면 무늬만</option><option value="marker">마커 띠만 (구방식)</option></select></div>
@@ -174,6 +179,9 @@ h3{font-size:13px;margin:14px 0 6px;color:var(--acc2)}
 </script>
 <script>
 /*SPINTEX*/
+</script>
+<script>
+/*STREAK*/
 </script>
 <script>
 /*HOUGH*/
