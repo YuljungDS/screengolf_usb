@@ -5,7 +5,7 @@
   const YD = 0.9144;
 
   // ---------- 설정 ----------
-  const SKEYS = ['sNet', 'sDiag', 'sFov', 'sKf', 'sClub', 'sCamMode', 'sPhi', 'sPitch', 'sRoll', 'sCalM', 'sHand', 'sSpinMode', 'sDist', 'sDir', 'sThr', 'sDiff', 'sDepth', 'sProc', 'sTsFix', 'sCal', 'sDefSpin', 'sSurf', 'sWind', 'sWindDir', 'sAlt', 'sTemp', 'sUnit', 'sExp', 'sGain'];
+  const SKEYS = ['sNet', 'sDiag', 'sFov', 'sKf', 'sClub', 'sCamMode', 'sPhi', 'sPitch', 'sRoll', 'sCalM', 'sHand', 'sSpinMode', 'sDist', 'sDir', 'sThr', 'sDiff', 'sDepth', 'sProc', 'sTsFix', 'sCal', 'sDefSpin', 'sSurf', 'sWind', 'sWindDir', 'sAlt', 'sTemp', 'sUnit', 'sExp', 'sGain', 'sShutter'];
   try { const saved = JSON.parse(localStorage.getItem('psg-settings') || '{}'); for (const k of SKEYS) if (saved[k] != null) $(k).value = saved[k]; } catch (e) { }
   const S = () => ({
     hand: $('sHand').value, spinMode: $('sSpinMode').value, club: $('sClub').value,
@@ -14,7 +14,7 @@
     camMode: $('sCamMode').value, phi: +$('sPhi').value || 0, pitch: +$('sPitch').value || 0, roll: +$('sRoll').value || 0, calM: $('sCalM').value,
     dist: +$('sDist').value || 1, dir: $('sDir').value, thr: +$('sThr').value || 0, diff: +$('sDiff').value || 30,
     depth: $('sDepth').value === '1', proc: +$('sProc').value, cal: +$('sCal').value || 1, defSpin: +$('sDefSpin').value || 0,
-    exp: $('sExp').value, gain: $('sGain').value === '' ? -1 : +$('sGain').value,
+    shutter: $('sShutter').value, exp: $('sExp').value, gain: $('sGain').value === '' ? -1 : +$('sGain').value,
     surf: $('sSurf').value, wind: +$('sWind').value || 0, windDir: +$('sWindDir').value, alt: +$('sAlt').value || 0, temp: +$('sTemp').value, unit: $('sUnit').value,
   });
   for (const k of SKEYS) $(k).addEventListener('change', () => {
@@ -509,10 +509,13 @@
   function tRowList() { try { return JSON.parse(localStorage.getItem(trowKey()) || '[]'); } catch (e) { return []; } }
   function tRowLearned() { const a = tRowList().slice().sort((p, q) => p - q); return a.length >= 3 ? a[a.length >> 1] : null; }
   function tRowAdd(v) { const a = tRowList(); a.push(v); while (a.length > 9) a.shift(); try { localStorage.setItem(trowKey(), JSON.stringify(a)); } catch (e) { } showTRow(); detOpts(); }
-  function showTRow() { const a = tRowList(), L = tRowLearned(); $('trowInfo').textContent = L != null ? `롤링 셔터 행 읽기 시간 ${(L * 1e6).toFixed(1)}µs (샷 ${a.length}개로 학습, 고정 사용)` : `롤링 셔터 행 읽기 시간: 줄무늬 샷 ${a.length}/3개 후 자동 학습`; }
+  function showTRow() { const a = tRowList(), L = tRowLearned(); if (S().shutter === 'global') { $('trowInfo').textContent = '글로벌 셔터: 행 읽기 시간 0으로 고정(줄무늬가 기울지 않음)'; return; } $('trowInfo').textContent = L != null ? `롤링 셔터 행 읽기 시간 ${(L * 1e6).toFixed(1)}µs (샷 ${a.length}개로 학습, 고정 사용)` : `롤링 셔터 행 읽기 시간: 줄무늬 샷 ${a.length}/3개 후 자동 학습`; }
   $('trowReset').onclick = () => { try { localStorage.removeItem(trowKey()); } catch (e) { } showTRow(); detOpts(); };
   $('sExp').addEventListener('change', () => { sendExposure(); detOpts(); });
   $('sGain').addEventListener('change', () => sendExposure());
+  $('sShutter').addEventListener('change', () => { showTRow(); detOpts(); });
+  // 카메라 이름에 OV9281/OV9282/OV7251/AR0144 등 글로벌 셔터 센서가 보이면 자동으로 글로벌 셔터 제안
+  function guessShutter(name) { if (name && /OV928[12]|OV7251|OV9782|AR0144|AR0234|global/i.test(name) && $('sShutter').value === 'auto') { $('sShutter').value = 'global'; $('sShutter').dispatchEvent(new Event('change')); } }
   showTRow();
 
   function detOpts(det) {
@@ -523,7 +526,7 @@
     o.sizeTol = s.kf > 0 ? [0.7, 1.45] : [0.4, 3.0];
     // 노출 고정: 카메라가 실제로 보고한 노출 시간을 써야 속도가 맞음(요청값과 다를 수 있음)
     o.expTime = s.exp !== 'auto' && EXP.ok && EXP.mode === 'manual' ? EXP.time : 0;
-    o.tRow = tRowLearned();
+    o.tRow = s.shutter === 'global' ? 0 : tRowLearned(); // 글로벌 셔터(OV9281 등): 모든 행을 동시에 찍음
     o.clubMax = s.club === 'auto' ? { tee: CLUBS.driver.maxRpm, ground: CLUBS.iron7.maxRpm } : { tee: CLUBS[s.club].maxRpm, ground: CLUBS[s.club].maxRpm };
     const ov = Object.assign({}, o, { expTime: 0 }); // 영상 파일은 노출 시간을 모름 → 줄무늬 측정 안 함
     if (det) det.set(det === vidDet ? ov : o); else { camDet?.set(o); vidDet?.set(ov); }
@@ -598,13 +601,33 @@
   }
   $('camRefresh').onclick = () => { if (NATIVE.port) NATIVE.send({ cmd: 'list' }); listCams(); };
   const WEB_RES = $('camRes').innerHTML;
+  // USB 카메라 모드 목록: 크기·형식·최고 fps (같은 크기라도 MJPEG 고속 / YUYV 저속이 따로 있음)
+  function uvcModes() {
+    let ms = NATIVE.modes && NATIVE.modes.length ? NATIVE.modes : null;
+    if (!ms) { try { ms = JSON.parse(localStorage.getItem('psg-uvc-modes') || 'null'); } catch (e) { ms = null; } }
+    return ms || [];
+  }
+  function uvcOptions() {
+    const tn = t => t === 7 ? 'MJPEG' : t === 5 ? 'YUYV' : '형식' + t;
+    const seen = new Set();
+    const ms = uvcModes().slice().sort((p, q) => q.fps - p.fps || q.w * q.h - p.w * p.h).filter(m => { const k = `${m.w}x${m.h}@${m.fps}@${m.type}`; if (seen.has(k)) return false; seen.add(k); return true; });
+    let html = '<option value="auto">최고 fps 자동</option>';
+    if (ms.length) html += ms.map(m => `<option value="${m.w}x${m.h}@${m.fps}@${m.type}">${m.w}×${m.h} · ${m.fps}fps (${tn(m.type)})</option>`).join('');
+    else html += (NATIVE.sizes.length ? NATIVE.sizes : ['640x480']).map(z => `<option value="${z}">${z.replace('x', '×')}</option>`).join('');
+    return html;
+  }
   function onCamSel() {
     const uvc = $('camSel').value === '__uvc__';
     $('camFps').style.display = uvc ? 'none' : ''; $('camFpsL').style.display = uvc ? 'none' : '';
-    const want = uvc ? (NATIVE.sizes.length ? NATIVE.sizes.map(z => `<option value="${z}">${z.replace('x', '×')}</option>`).join('') : '<option value="640x480">640×480</option>') : WEB_RES;
-    if ($('camRes').dataset.mode !== (uvc ? 'u' + want.length : 'w')) { const prev = $('camRes').value; $('camRes').innerHTML = want; $('camRes').dataset.mode = uvc ? 'u' + want.length : 'w'; if ([...$('camRes').options].some(o => o.value === prev)) $('camRes').value = prev; }
+    const want = uvc ? uvcOptions() : WEB_RES;
+    if ($('camRes').dataset.mode !== (uvc ? 'u' + want.length : 'w')) {
+      let prev = $('camRes').value; if (uvc) { try { prev = localStorage.getItem('psg-camres') || prev; } catch (e) { } }
+      $('camRes').innerHTML = want; $('camRes').dataset.mode = uvc ? 'u' + want.length : 'w';
+      if ([...$('camRes').options].some(o => o.value === prev)) $('camRes').value = prev;
+    }
   }
   $('camSel').onchange = onCamSel;
+  $('camRes').addEventListener('change', () => { if ($('camSel').value === '__uvc__') try { localStorage.setItem('psg-camres', $('camRes').value); } catch (e) { } });
   $('camStart').onclick = async () => {
     if (camRun) return stopCam();
     camWarn('');
@@ -772,8 +795,11 @@
       if (m.type === 'exposure') { onExposure(m); return; }
       if (m.type === 'saved') { $('camMsg').textContent = m.error ? `저장 실패: ${m.error}` : `저장했습니다: ${m.path} — 이 사진을 Claude 대화창에 올려 주세요`; return; }
       if (m.type === 'status') {
-        if (Array.isArray(m.sizes) && m.sizes.length) { NATIVE.sizes = m.sizes; onCamSel(); }
-        NATIVE.info = `${m.device || 'USB 카메라 없음'}${m.size ? ' · ' + m.size : ''}${m.fps ? ` · 수신 ${m.fps.toFixed(0)} fps` : ''}${m.drops ? ` · 버림 ${m.drops}` : ''}`;
+        if (Array.isArray(m.sizes) && m.sizes.length) NATIVE.sizes = m.sizes;
+        if (Array.isArray(m.modes) && m.modes.length) { NATIVE.modes = m.modes; try { localStorage.setItem('psg-uvc-modes', JSON.stringify(m.modes)); } catch (e) { } }
+        if (m.sizes || m.modes) onCamSel();
+        guessShutter(m.device);
+        NATIVE.info = `${m.device || 'USB 카메라 없음'}${m.size ? ' · ' + m.size : ''}${m.modeType ? ' ' + m.modeType : ''}${m.modeFps ? ` · 카메라 설정 ${m.modeFps}fps` : ''}${m.fps ? ` · 수신 ${m.fps.toFixed(0)}fps` : ''}${m.drops ? ` · 버림 ${m.drops}` : ''}`;
         if (!NATIVE.run) $('camInfo').textContent = NATIVE.info;
         if (m.msg) $('camMsg').textContent = m.msg;
         if (m.state === 'error') { camWarn(m.msg); chip('USB 카메라 오류', 'err'); }
@@ -785,13 +811,14 @@
     if (d instanceof ArrayBuffer) nativeFrame(d);
   }
   function startNative() {
-    const [w, h] = $('camRes').value.split('x').map(Number);
+    const rv = $('camRes').value, auto = rv === 'auto';
+    const [wh, fpsS, typeS] = rv.split('@'); const [w, h] = (auto ? '640x480' : wh).split('x').map(Number);
     camDet = new Detector.ShotDetector({}); detOpts(camDet);
     NATIVE.ts = null; NATIVE.n = 0; NATIVE.tf = performance.now(); NATIVE.expSent = false;
     NATIVE.run = true; camRun = true;
     $('camStart').textContent = '정지'; chip('USB 카메라 연결 중', 'live');
     $('camMsg').textContent = 'USB 카메라 권한을 허용해 주세요…';
-    NATIVE.send({ cmd: 'start', width: w || 640, height: h || 480, procW: S().proc });
+    NATIVE.send({ cmd: 'start', width: w || 640, height: h || 480, procW: S().proc, fps: +fpsS || 0, type: typeS != null ? +typeS : -1, auto });
   }
   // USB 전송 지터 보정: 프레임 간격을 추정해 균일한 시간축으로 재구성(누락 프레임은 간격 배수로 계산)
   function smoothT(tRaw) {

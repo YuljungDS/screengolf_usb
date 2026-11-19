@@ -60,7 +60,7 @@ import kotlin.math.abs
  * 밝기(Y) 프레임을 WebView 안의 웹앱(assets/www/index.html)으로 WebMessagePort를 통해 보낸다.
  *
  * 프레임 형식(ArrayBuffer, little-endian): [u16 w][u16 h][i64 timestamp ns][w*h 바이트 Y]
- * 웹앱 → 앱 명령(JSON 문자열): {cmd:"hello"|"list"|"start"|"stop", width, height, procW}, 그리고 프레임 처리 완료 "ack"
+ * 웹앱 → 앱 명령(JSON 문자열): {cmd:"hello"|"list"|"start"|"stop", width, height, procW, fps, type, auto}, 그리고 프레임 처리 완료 "ack"
  */
 class MainActivity : AppCompatActivity() {
 
@@ -90,6 +90,12 @@ class MainActivity : AppCompatActivity() {
     private var lastClaimDiag = ""
     private var reqW = 640
     private var reqH = 480
+    private var reqFps = 0
+    private var reqType = -1
+    private var reqAuto = false
+    private var modes = JSONArray()
+    private var openFps = 0
+    private var openType = 0
     @Volatile private var procW = 480
     @Volatile private var frameW = 0
     @Volatile private var frameH = 0
@@ -247,6 +253,9 @@ class MainActivity : AppCompatActivity() {
             "start" -> {
                 reqW = m.optInt("width", 640)
                 reqH = m.optInt("height", 480)
+                reqFps = m.optInt("fps", 0)      // 0 = 그 크기의 최고 fps
+                reqType = m.optInt("type", -1)   // -1 = 형식 상관없음(빠른 쪽), 7 = MJPEG, 5 = YUYV
+                reqAuto = m.optBoolean("auto", false) // 최고 fps 모드 자동 선택
                 procW = m.optInt("procW", 480).coerceIn(160, 1280)
                 startCamera()
             }
@@ -329,8 +338,9 @@ class MainActivity : AppCompatActivity() {
             .put("state", state)
             .put("device", name ?: if (findUvc() != null) "USB 카메라" else JSONObject.NULL)
             .put("sizes", JSONArray(sizes))
+            .put("modes", modes)
             .put("drops", drops)
-        if (state == "open" && frameW > 0) o.put("size", "${frameW}x${frameH}")
+        if (state == "open" && frameW > 0) o.put("size", "${frameW}x${frameH}").put("modeFps", openFps).put("modeType", if (openType == UVCCamera.UVC_VS_FRAME_MJPEG) "MJPEG" else if (openType == UVCCamera.UVC_VS_FRAME_UNCOMPRESSED) "YUYV" else "$openType")
         if (fps > 0) o.put("fps", fps)
         if (msg != null) o.put("msg", msg)
         val text = o.toString()
@@ -546,10 +556,27 @@ class MainActivity : AppCompatActivity() {
         val h = helper ?: return
         val list: List<Size> = try { h.supportedSizeList ?: emptyList() } catch (e: Exception) { emptyList() }
         sizes = list.map { "${it.width}x${it.height}" }.distinct()
-        val pick = list.firstOrNull { it.width == reqW && it.height == reqH }
-            ?: list.minByOrNull { abs(it.width - reqW) + abs(it.height - reqH) }
-        if (pick != null) safe { h.previewSize = pick }
+        // 카메라가 알려준 모든 모드(크기·형식·fps 목록) — 같은 크기라도 MJPEG(고속)·YUYV(저속)가 따로 있음
+        val maxF = { z: Size -> maxOf(z.fps, z.fpsList?.maxOrNull() ?: 0) }
+        modes = JSONArray().also { arr -> list.forEach { z -> arr.put(JSONObject().put("w", z.width).put("h", z.height).put("type", z.type).put("fps", maxF(z)).put("fpsList", JSONArray(z.fpsList ?: emptyList<Int>()))) } }
+        val base: Size? = if (reqAuto) {
+            // 최고 fps 모드: fps가 가장 높은 것, 같으면 큰 해상도(가로 320 이상)
+            list.filter { it.width >= 320 }.maxWithOrNull(compareBy<Size>({ maxF(it) }, { it.width * it.height })) ?: list.maxByOrNull { maxF(it) }
+        } else {
+            list.filter { it.width == reqW && it.height == reqH && (reqType < 0 || it.type == reqType) && (reqFps <= 0 || maxF(it) >= reqFps) }
+                .maxByOrNull { maxF(it) }
+                ?: list.filter { it.width == reqW && it.height == reqH }.maxByOrNull { maxF(it) }
+                ?: list.minByOrNull { abs(it.width - reqW) + abs(it.height - reqH) }
+        }
+        var opened = false
+        if (base != null) {
+            val want = if (reqFps > 0 && !reqAuto && ((base.fpsList?.contains(reqFps) == true) || base.fps == reqFps)) reqFps else maxF(base)
+            val pick = base.clone().also { it.fps = want }
+            try { h.previewSize = pick; opened = true; openFps = want; openType = pick.type } catch (e: Throwable) { Log.w(TAG, "previewSize $pick", e) }
+            if (!opened) try { h.previewSize = base; opened = true; openFps = base.fps; openType = base.type } catch (e: Throwable) { Log.w(TAG, "previewSize base", e) }
+        }
         val ps = try { h.previewSize } catch (e: Exception) { null }
+        if (ps != null) { openFps = ps.fps; openType = ps.type }
         frameW = ps?.width ?: reqW
         frameH = ps?.height ?: reqH
         inFlight.set(0); drops = 0; frames = 0; lastStatusMs = SystemClock.uptimeMillis()
@@ -557,7 +584,8 @@ class MainActivity : AppCompatActivity() {
         safe { h.startPreview() }
         if (surfaceReady) safe { h.addSurface(surfaceView.holder.surface, false) }
         state = "open"
-        sendStatus("USB 카메라 열림 (${frameW}×${frameH}) · 모드: ${ps ?: "기본"}")
+        val tn = if (openType == UVCCamera.UVC_VS_FRAME_MJPEG) "MJPEG" else if (openType == UVCCamera.UVC_VS_FRAME_UNCOMPRESSED) "YUYV" else "형식 $openType"
+        sendStatus("USB 카메라 열림 (${frameW}×${frameH} · $tn · 카메라 설정 ${openFps}fps)")
         if (expReq != null) camExec { Thread.sleep(400); applyExposure() } // 다시 열 때 노출 설정 재적용
     }
 
