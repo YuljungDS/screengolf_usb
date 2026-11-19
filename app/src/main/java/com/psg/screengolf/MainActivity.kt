@@ -94,6 +94,7 @@ class MainActivity : AppCompatActivity() {
     private val PREVIEW_SURFACE = false
     private val HDR = 16 // 머리: [u16 w][u16 h][i64 받은 시각 ns][i32 프레임 번호]
     @Volatile private var frameSeq = 0
+    private var lastSizeQuery = 0L
     private var reqType = -1
     private var reqAuto = false
     private var modes = JSONArray()
@@ -573,15 +574,32 @@ class MainActivity : AppCompatActivity() {
                 ?: list.filter { it.width == reqW && it.height == reqH }.maxByOrNull { maxF(it) }
                 ?: list.minByOrNull { abs(it.width - reqW) + abs(it.height - reqH) }
         }
-        var opened = false
+        var pick: Size? = null
         if (base != null) {
             val want = if (reqFps > 0 && !reqAuto && ((base.fpsList?.contains(reqFps) == true) || base.fps == reqFps)) reqFps else maxF(base)
-            val pick = base.clone().also { it.fps = want }
-            try { h.previewSize = pick; opened = true; openFps = want; openType = pick.type } catch (e: Throwable) { Log.w(TAG, "previewSize $pick", e) }
-            if (!opened) try { h.previewSize = base; opened = true; openFps = base.fps; openType = base.type } catch (e: Throwable) { Log.w(TAG, "previewSize base", e) }
+            pick = base.clone().also { it.fps = want }
+            // 주의: CameraHelper.setPreviewSize는 비동기(대기열에 넣고 바로 돌아옴) → 바로 읽으면 열 때 기본값(첫 모드, 예 1280×800)이 나옴
+            safe { h.previewSize = pick }
         }
-        val ps = try { h.previewSize } catch (e: Exception) { null }
-        if (ps != null) { openFps = ps.fps; openType = ps.type }
+        state = "opening"
+        sendStatus("해상도 바꾸는 중… (${pick?.width ?: "?"}×${pick?.height ?: "?"} · ${pick?.fps ?: "?"}fps)")
+        val target = pick
+        camExec {
+            // 실제로 바뀔 때까지 기다림(최대 1.5초)
+            var ps: Size? = null
+            for (i in 0 until 30) {
+                ps = try { helper?.previewSize } catch (e: Exception) { null }
+                if (target == null || (ps != null && ps.width == target.width && ps.height == target.height && ps.fps == target.fps && ps.type == target.type)) break
+                Thread.sleep(50)
+            }
+            main.post { finishOpen(ps, target) }
+        }
+    }
+
+    private fun finishOpen(ps0: Size?, target: Size?) {
+        val h = helper ?: return
+        val ps = ps0 ?: try { h.previewSize } catch (e: Exception) { null }
+        openFps = ps?.fps ?: 0; openType = ps?.type ?: 0
         frameW = ps?.width ?: reqW
         frameH = ps?.height ?: reqH
         inFlight.set(0); drops = 0; frames = 0; frameSeq = 0; lastStatusMs = SystemClock.uptimeMillis()
@@ -590,7 +608,8 @@ class MainActivity : AppCompatActivity() {
         if (surfaceReady && PREVIEW_SURFACE) safe { h.addSurface(surfaceView.holder.surface, false) }
         state = "open"
         val tn = if (openType == UVCCamera.UVC_VS_FRAME_MJPEG) "MJPEG" else if (openType == UVCCamera.UVC_VS_FRAME_UNCOMPRESSED) "YUYV" else "형식 $openType"
-        sendStatus("USB 카메라 열림 (${frameW}×${frameH} · $tn · 카메라 설정 ${openFps}fps)")
+        val miss = target != null && ps != null && (ps.width != target.width || ps.height != target.height || ps.fps != target.fps)
+        sendStatus("USB 카메라 열림 (${frameW}×${frameH} · $tn · 카메라 설정 ${openFps}fps)" + if (miss) " — 요청한 ${target!!.width}×${target.height}·${target.fps}fps로 바꾸지 못했습니다" else "")
         if (expReq != null) camExec { Thread.sleep(400); applyExposure() } // 다시 열 때 노출 설정 재적용
     }
 
@@ -610,6 +629,15 @@ class MainActivity : AppCompatActivity() {
         }
         val p = port ?: return
         if (inFlight.get() >= MAX_IN_FLIGHT) { drops++; return }
+        // 받은 프레임(NV21 = w*h*1.5) 크기가 알고 있는 해상도와 다르면 실제 해상도를 다시 물음(해상도 변경이 늦게 적용되는 경우)
+        if (buf.capacity() != frameW * frameH * 3 / 2) {
+            val now = SystemClock.uptimeMillis()
+            if (now - lastSizeQuery > 200) {
+                lastSizeQuery = now
+                val ps = try { helper?.previewSize } catch (e: Exception) { null }
+                if (ps != null && ps.width * ps.height * 3 / 2 == buf.capacity()) { frameW = ps.width; frameH = ps.height; openFps = ps.fps; openType = ps.type }
+            }
+        }
         val w = frameW
         val h = frameH
         val n = w * h
