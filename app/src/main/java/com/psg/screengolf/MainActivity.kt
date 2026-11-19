@@ -92,6 +92,8 @@ class MainActivity : AppCompatActivity() {
     private var reqH = 480
     private var reqFps = 0
     private val PREVIEW_SURFACE = false
+    private val HDR = 16 // 머리: [u16 w][u16 h][i64 받은 시각 ns][i32 프레임 번호]
+    @Volatile private var frameSeq = 0
     private var reqType = -1
     private var reqAuto = false
     private var modes = JSONArray()
@@ -582,7 +584,7 @@ class MainActivity : AppCompatActivity() {
         if (ps != null) { openFps = ps.fps; openType = ps.type }
         frameW = ps?.width ?: reqW
         frameH = ps?.height ?: reqH
-        inFlight.set(0); drops = 0; frames = 0; lastStatusMs = SystemClock.uptimeMillis()
+        inFlight.set(0); drops = 0; frames = 0; frameSeq = 0; lastStatusMs = SystemClock.uptimeMillis()
         safe { h.setFrameCallback(frameCallback, UVCCamera.PIXEL_FORMAT_NV21) }
         safe { h.startPreview() }
         if (surfaceReady && PREVIEW_SURFACE) safe { h.addSurface(surfaceView.holder.surface, false) }
@@ -599,6 +601,7 @@ class MainActivity : AppCompatActivity() {
         if (buf == null) return
         val tNs = System.nanoTime()
         frames++
+        frameSeq++ // 카메라 프레임 번호(웹앱이 버린 프레임도 셈) → 정확한 촬영 시각 = 번호 × 1/fps
         val nowMs = SystemClock.uptimeMillis()
         if (nowMs - lastStatusMs >= 1000) {
             val fps = frames * 1000.0 / (nowMs - lastStatusMs)
@@ -620,15 +623,15 @@ class MainActivity : AppCompatActivity() {
         val step = maxOf(1, w / procW) // 정수 배율 박스 평균으로 축소
         val ow = w / step
         val oh = h / step
-        val out = ByteArray(12 + ow * oh)
-        ByteBuffer.wrap(out, 0, 12).order(ByteOrder.LITTLE_ENDIAN).apply {
-            putShort(ow.toShort()); putShort(oh.toShort()); putLong(tNs)
+        val out = ByteArray(HDR + ow * oh)
+        ByteBuffer.wrap(out, 0, HDR).order(ByteOrder.LITTLE_ENDIAN).apply {
+            putShort(ow.toShort()); putShort(oh.toShort()); putLong(tNs); putInt(frameSeq)
         }
         if (step == 1) {
-            System.arraycopy(yBuf, 0, out, 12, n)
+            System.arraycopy(yBuf, 0, out, HDR, n)
         } else {
             val area = step * step
-            var o = 12
+            var o = HDR
             for (oy in 0 until oh) {
                 val y0 = oy * step
                 for (ox in 0 until ow) {

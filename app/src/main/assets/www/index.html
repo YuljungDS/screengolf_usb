@@ -70,7 +70,7 @@ h3{font-size:13px;margin:14px 0 6px;color:var(--acc2)}
 </style>
 </head>
 <body>
-<header><h1>⛳ 폰 스크린골프 <b>Tracker</b> <span style="font-size:10px;font-weight:600;color:var(--mut,#8aa);margin-left:4px">v0.13</span> <span id="appBadge" style="display:none;font-size:10px;font-weight:600;color:#0b1510;background:var(--acc2);padding:2px 6px;border-radius:6px;vertical-align:middle">APP</span></h1><span id="chip">대기</span></header>
+<header><h1>⛳ 폰 스크린골프 <b>Tracker</b> <span style="font-size:10px;font-weight:600;color:var(--mut,#8aa);margin-left:4px">v0.14</span> <span id="appBadge" style="display:none;font-size:10px;font-weight:600;color:#0b1510;background:var(--acc2);padding:2px 6px;border-radius:6px;vertical-align:middle">APP</span></h1><span id="chip">대기</span></header>
 <div class="wrap">
   <div id="stage">
     <canvas id="field"></canvas>
@@ -2804,7 +2804,7 @@ const Detector = (() => {
     const best = {}; for (const m of ms) { const k = m.w + 'x' + m.h; if (!best[k] || m.fps > best[k].fps) best[k] = m; }
     const top = Object.values(best).sort((p, q) => q.fps - p.fps || q.w * q.h - p.w * p.h).slice(0, 6);
     const mx = top.length ? top[0].fps : 0;
-    $('camModes').textContent = `카메라가 알려준 최고 속도: ${top.map(m => `${m.w}×${m.h} ${m.fps}fps(${tn(m.type)})`).join(' · ')}${mx <= 120 ? ' — ※ 이 카메라는 120fps보다 빠른 모드를 알려주지 않습니다(판매 표기와 다를 수 있음)' : ''}`;
+    $('camModes').textContent = `카메라가 알려준 최고 속도: ${top.map(m => `${m.w}×${m.h} ${m.fps}fps(${tn(m.type)})`).join(' · ')}${mx <= 120 ? ' — ※ 이 카메라는 120fps보다 빠른 모드를 알려주지 않습니다(판매 표기와 다를 수 있음)' : ''} — 고속 모드는 해상도가 낮아 공이 작게 찍힘: 공 지름이 20px 미만이면 못 찾을 수 있으니 카메라를 더 가까이 두거나 한 단계 큰 해상도(예: 640×480)를 쓰세요`;
   }
   function onCamSel() {
     showModes();
@@ -2986,6 +2986,7 @@ const Detector = (() => {
       if (m.type === 'exposure') { onExposure(m); return; }
       if (m.type === 'saved') { $('camMsg').textContent = m.error ? `저장 실패: ${m.error}` : `저장했습니다: ${m.path} — 이 사진을 Claude 대화창에 올려 주세요`; return; }
       if (m.type === 'status') {
+        if (m.modeFps) NATIVE.modeFps = m.modeFps;
         if (Array.isArray(m.sizes) && m.sizes.length) NATIVE.sizes = m.sizes;
         if (Array.isArray(m.modes) && m.modes.length) { NATIVE.modes = m.modes; try { localStorage.setItem('psg-uvc-modes', JSON.stringify(m.modes)); } catch (e) { } }
         if (m.sizes || m.modes) onCamSel();
@@ -3005,21 +3006,42 @@ const Detector = (() => {
     const rv = $('camRes').value, auto = rv === 'auto';
     const [wh, fpsS, typeS] = rv.split('@'); const [w, h] = (auto ? '640x480' : wh).split('x').map(Number);
     camDet = new Detector.ShotDetector({}); detOpts(camDet);
-    NATIVE.ts = null; NATIVE.n = 0; NATIVE.tf = performance.now(); NATIVE.expSent = false;
+    NATIVE.ts = null; NATIVE.n = 0; NATIVE.tf = performance.now(); NATIVE.expSent = false; NATIVE.modeFps = 0;
     NATIVE.run = true; camRun = true;
     $('camStart').textContent = '정지'; chip('USB 카메라 연결 중', 'live');
     $('camMsg').textContent = 'USB 카메라 권한을 허용해 주세요…';
     NATIVE.send({ cmd: 'start', width: w || 640, height: h || 480, procW: S().proc, fps: +fpsS || 0, type: typeS != null ? +typeS : -1, auto });
   }
   // USB 전송 지터 보정: 프레임 간격을 추정해 균일한 시간축으로 재구성(누락 프레임은 간격 배수로 계산)
-  function smoothT(tRaw) {
-    const T = NATIVE.ts;
-    if (!T) { NATIVE.ts = { last: tRaw, dt: 0, t: 0, warm: [] }; return 0; }
+  // 프레임 시각 보정: 앱이 받은 시각은 처리 지연으로 흔들림 → '프레임 간격 × 프레임 번호'로 고름
+  //   간격은 카메라가 알려준 fps로 시작하고, 최근 61개 간격의 중앙값으로 계속 갱신(시작 직후 띄엄띄엄 온 간격에 고정되지 않게)
+  function smoothT(tRaw, seq) {
+    let T = NATIVE.ts;
+    // 프레임 번호가 있고 카메라 fps를 알면: 시각 = 번호 차 × 1/fps (흔들림 없음). 라이브러리가 프레임을 버렸으면(받은 간격이 훨씬 김) 받은 간격으로 보정
+    if (seq != null && NATIVE.modeFps) {
+      const dt = 1 / NATIVE.modeFps;
+      if (!T || T.seq == null) { NATIVE.ts = { last: tRaw, dt, t: 0, seq }; return 0; }
+      const ds = seq - T.seq, nT = Math.round((tRaw - T.last) / dt);
+      T.seq = seq; T.last = tRaw; T.dt = dt;
+      T.t += (ds > 0 ? (nT > ds + 3 ? nT : ds) : Math.max(1, nT)) * dt;
+      return T.t;
+    }
+    if (!T) { T = NATIVE.ts = { last: tRaw, dt: NATIVE.modeFps ? 1 / NATIVE.modeFps : 0, t: 0, ring: [], k: 0, off: tRaw }; return 0; }
     const d = tRaw - T.last; T.last = tRaw;
     if (d <= 0) return T.t;
-    if (T.warm.length < 15) { T.warm.push(d); const a = T.warm.slice().sort((p, q) => p - q); T.dt = a[a.length >> 1]; }
-    else if (d > 0.6 * T.dt && d < 1.4 * T.dt) T.dt = T.dt * 0.99 + d * 0.01;
-    T.t += Math.max(1, Math.round(d / T.dt)) * T.dt;
+    T.ring.push(d); if (T.ring.length > 61) T.ring.shift();
+    if (NATIVE.modeFps) T.dt = 1 / NATIVE.modeFps; // 카메라 설정 fps(카메라 내부 시계) = 가장 정확
+    else if (++T.k % 8 === 0 || !T.dt) {
+      // 모를 때: 간격 중앙값 → 버림(2배 이상 간격) 빼고 다시 중앙값
+      const a = T.ring.slice().sort((p, q) => p - q), m0 = a[a.length >> 1];
+      const b = a.filter(x => x < m0 * 1.6), med = b[b.length >> 1] || m0;
+      T.dt = med;
+    }
+    // 프레임 번호는 '받은 시각 − 최소 지연선'에 맞춰 정함 → 흔들림이 쌓이지 않고 매번 실제 시각으로 다시 맞춰짐
+    if (T.off == null) T.off = tRaw - T.t;
+    T.t += Math.max(1, Math.round((tRaw - T.off - T.t) / T.dt)) * T.dt;
+    const e = tRaw - T.off - T.t;
+    T.off += e < 0 ? e : e * 0.002; // 지연이 더 짧았던 프레임이 오면 기준선을 내림, 아니면 아주 천천히 올림(시계 차이)
     return T.t;
   }
   function nativeFrame(buf) {
@@ -3027,9 +3049,11 @@ const Detector = (() => {
     if (!NATIVE.run || !camDet) return;
     const dv = new DataView(buf), w = dv.getUint16(0, true), h = dv.getUint16(2, true);
     const tNs = Number(dv.getBigInt64(4, true));
-    if (buf.byteLength < 12 + w * h) return;
-    const gray = new Uint8Array(buf, 12, w * h);
-    const t = $('sTsFix').value === '1' ? smoothT(tNs / 1e9) : tNs / 1e9;
+    const hdr = buf.byteLength >= 16 + w * h ? 16 : 12; // 16바이트 머리 = 프레임 번호 포함(v0.14 앱)
+    if (buf.byteLength < hdr + w * h) return;
+    const seq = hdr === 16 ? dv.getInt32(12, true) : null;
+    const gray = new Uint8Array(buf, hdr, w * h);
+    const t = $('sTsFix').value === '1' ? smoothT(tNs / 1e9, seq) : tNs / 1e9;
     camLast = { gray, w, h, t };
     if (CAL.on) { camProc.put(gray, w, h); overlay($('preview'), camProc, { state: '보정', track: [], thr: 0, msg: CAL.msg }, $('camMsg')); return; }
     const out = camDet.process({ gray, w, h, t });
