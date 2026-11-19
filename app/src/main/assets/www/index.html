@@ -70,7 +70,7 @@ h3{font-size:13px;margin:14px 0 6px;color:var(--acc2)}
 </style>
 </head>
 <body>
-<header><h1>⛳ 폰 스크린골프 <b>Tracker</b> <span style="font-size:10px;font-weight:600;color:var(--mut,#8aa);margin-left:4px">v0.12</span> <span id="appBadge" style="display:none;font-size:10px;font-weight:600;color:#0b1510;background:var(--acc2);padding:2px 6px;border-radius:6px;vertical-align:middle">APP</span></h1><span id="chip">대기</span></header>
+<header><h1>⛳ 폰 스크린골프 <b>Tracker</b> <span style="font-size:10px;font-weight:600;color:var(--mut,#8aa);margin-left:4px">v0.13</span> <span id="appBadge" style="display:none;font-size:10px;font-weight:600;color:#0b1510;background:var(--acc2);padding:2px 6px;border-radius:6px;vertical-align:middle">APP</span></h1><span id="chip">대기</span></header>
 <div class="wrap">
   <div id="stage">
     <canvas id="field"></canvas>
@@ -95,6 +95,7 @@ h3{font-size:13px;margin:14px 0 6px;color:var(--acc2)}
         <button class="primary" id="camStart" style="margin-left:auto">카메라 시작</button></div>
       <canvas id="preview" width="480" height="360"></canvas>
       <div class="msg" id="camMsg">카메라를 시작하세요.</div>
+      <div class="row" style="font-size:12px;color:var(--mute)"><span id="camModes"></span></div>
       <div class="row" style="font-size:12px;color:var(--mute)"><span id="camInfo"></span><button class="ghost" id="camReset" style="margin-left:auto;padding:6px 10px">공 다시 찾기</button></div>
       <div class="note" style="margin:6px 0"><b>공 인식</b> — 정해진 거리(0.3~0.5m)에서의 골프공 크기, 윤곽이 원인지, 구 특유의 명암이 있는지로 공을 고릅니다. 흰 종이·매트 흰 줄·큰 흰 원은 무시합니다. <b>처음 한 번 미리보기에서 공을 탭</b>하면 실제 공 크기를 학습해 더 정확해집니다.</div>
       <div class="row"><label style="min-width:auto">클럽</label><select id="sClub"><option value="auto">자동 (티 위 → 드라이버 · 지면 → 7번 아이언)</option><option value="driver">드라이버</option><option value="wood3">3번 우드</option><option value="iron7">7번 아이언</option><option value="pw">피칭웨지</option></select></div>
@@ -2796,7 +2797,17 @@ const Detector = (() => {
     else html += (NATIVE.sizes.length ? NATIVE.sizes : ['640x480']).map(z => `<option value="${z}">${z.replace('x', '×')}</option>`).join('');
     return html;
   }
+  // 카메라가 알려준 고속 모드 요약(진단): 420fps가 안 나올 때 '카메라가 그런 모드를 안 알려줌'인지 바로 알 수 있게
+  function showModes() {
+    const ms = uvcModes(); if (!ms.length || $('camSel').value !== '__uvc__') { $('camModes').textContent = ''; return; }
+    const tn = t => t === 7 ? 'MJPEG' : t === 5 ? 'YUYV' : '형식' + t;
+    const best = {}; for (const m of ms) { const k = m.w + 'x' + m.h; if (!best[k] || m.fps > best[k].fps) best[k] = m; }
+    const top = Object.values(best).sort((p, q) => q.fps - p.fps || q.w * q.h - p.w * p.h).slice(0, 6);
+    const mx = top.length ? top[0].fps : 0;
+    $('camModes').textContent = `카메라가 알려준 최고 속도: ${top.map(m => `${m.w}×${m.h} ${m.fps}fps(${tn(m.type)})`).join(' · ')}${mx <= 120 ? ' — ※ 이 카메라는 120fps보다 빠른 모드를 알려주지 않습니다(판매 표기와 다를 수 있음)' : ''}`;
+  }
   function onCamSel() {
+    showModes();
     const uvc = $('camSel').value === '__uvc__';
     $('camFps').style.display = uvc ? 'none' : ''; $('camFpsL').style.display = uvc ? 'none' : '';
     const want = uvc ? uvcOptions() : WEB_RES;
@@ -2979,7 +2990,7 @@ const Detector = (() => {
         if (Array.isArray(m.modes) && m.modes.length) { NATIVE.modes = m.modes; try { localStorage.setItem('psg-uvc-modes', JSON.stringify(m.modes)); } catch (e) { } }
         if (m.sizes || m.modes) onCamSel();
         guessShutter(m.device);
-        NATIVE.info = `${m.device || 'USB 카메라 없음'}${m.size ? ' · ' + m.size : ''}${m.modeType ? ' ' + m.modeType : ''}${m.modeFps ? ` · 카메라 설정 ${m.modeFps}fps` : ''}${m.fps ? ` · 수신 ${m.fps.toFixed(0)}fps` : ''}${m.drops ? ` · 버림 ${m.drops}` : ''}`;
+        NATIVE.info = `${m.device || 'USB 카메라 없음'}${m.size ? ' · ' + m.size : ''}${m.modeType ? ' ' + m.modeType : ''}${m.modeFps ? ` · 카메라 설정 ${m.modeFps}fps` : ''}${m.fps ? ` · 폰 수신 ${m.fps.toFixed(0)}fps` : ''}${m.drops ? ` · 버림 ${m.drops}` : ''}`;
         if (!NATIVE.run) $('camInfo').textContent = NATIVE.info;
         if (m.msg) $('camMsg').textContent = m.msg;
         if (m.state === 'error') { camWarn(m.msg); chip('USB 카메라 오류', 'err'); }
@@ -3028,7 +3039,7 @@ const Detector = (() => {
     const now = performance.now();
     if (now - NATIVE.tf > 1000) {
       const fps = NATIVE.n * 1000 / (now - NATIVE.tf); NATIVE.n = 0; NATIVE.tf = now;
-      $('camInfo').textContent = `${NATIVE.info} · 처리 ${w}×${h} @ ${fps.toFixed(0)} fps${NATIVE.ts?.dt ? ` · 프레임간격 ${(NATIVE.ts.dt * 1000).toFixed(1)} ms` : ''}`;
+      $('camInfo').textContent = `${NATIVE.info} · 웹앱 처리 ${w}×${h} @ ${fps.toFixed(0)} fps${NATIVE.ts?.dt ? ` · 프레임간격 ${(NATIVE.ts.dt * 1000).toFixed(1)} ms` : ''}`;
       if (fps > 0 && chipEl().textContent.startsWith('USB 카메라 연결')) chip('USB 카메라 실행 중', 'live');
     }
     if (out.shot) fromDetector(out.shot, 'USB');

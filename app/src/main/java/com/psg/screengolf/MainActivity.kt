@@ -91,6 +91,7 @@ class MainActivity : AppCompatActivity() {
     private var reqW = 640
     private var reqH = 480
     private var reqFps = 0
+    private val PREVIEW_SURFACE = false
     private var reqType = -1
     private var reqAuto = false
     private var modes = JSONArray()
@@ -145,7 +146,9 @@ class MainActivity : AppCompatActivity() {
         surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
                 surfaceReady = true
-                if (state == "open") safe { helper?.addSurface(holder.surface, false) }
+                // 미리보기 Surface는 붙이지 않음: 붙이면 라이브러리 GPU 렌더러가 화면 주사율(60/120Hz)에 맞춰 기다리고,
+                // 그동안 카메라 프레임 처리 전체가 막혀 수신 fps가 주사율로 제한됨(420fps 카메라도 120fps). 화면 표시는 웹앱 캔버스가 함
+                if (state == "open" && PREVIEW_SURFACE) safe { helper?.addSurface(holder.surface, false) }
             }
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {}
             override fun surfaceDestroyed(holder: SurfaceHolder) {
@@ -582,7 +585,7 @@ class MainActivity : AppCompatActivity() {
         inFlight.set(0); drops = 0; frames = 0; lastStatusMs = SystemClock.uptimeMillis()
         safe { h.setFrameCallback(frameCallback, UVCCamera.PIXEL_FORMAT_NV21) }
         safe { h.startPreview() }
-        if (surfaceReady) safe { h.addSurface(surfaceView.holder.surface, false) }
+        if (surfaceReady && PREVIEW_SURFACE) safe { h.addSurface(surfaceView.holder.surface, false) }
         state = "open"
         val tn = if (openType == UVCCamera.UVC_VS_FRAME_MJPEG) "MJPEG" else if (openType == UVCCamera.UVC_VS_FRAME_UNCOMPRESSED) "YUYV" else "형식 $openType"
         sendStatus("USB 카메라 열림 (${frameW}×${frameH} · $tn · 카메라 설정 ${openFps}fps)")

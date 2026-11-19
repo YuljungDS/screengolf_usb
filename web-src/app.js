@@ -616,7 +616,17 @@
     else html += (NATIVE.sizes.length ? NATIVE.sizes : ['640x480']).map(z => `<option value="${z}">${z.replace('x', '×')}</option>`).join('');
     return html;
   }
+  // 카메라가 알려준 고속 모드 요약(진단): 420fps가 안 나올 때 '카메라가 그런 모드를 안 알려줌'인지 바로 알 수 있게
+  function showModes() {
+    const ms = uvcModes(); if (!ms.length || $('camSel').value !== '__uvc__') { $('camModes').textContent = ''; return; }
+    const tn = t => t === 7 ? 'MJPEG' : t === 5 ? 'YUYV' : '형식' + t;
+    const best = {}; for (const m of ms) { const k = m.w + 'x' + m.h; if (!best[k] || m.fps > best[k].fps) best[k] = m; }
+    const top = Object.values(best).sort((p, q) => q.fps - p.fps || q.w * q.h - p.w * p.h).slice(0, 6);
+    const mx = top.length ? top[0].fps : 0;
+    $('camModes').textContent = `카메라가 알려준 최고 속도: ${top.map(m => `${m.w}×${m.h} ${m.fps}fps(${tn(m.type)})`).join(' · ')}${mx <= 120 ? ' — ※ 이 카메라는 120fps보다 빠른 모드를 알려주지 않습니다(판매 표기와 다를 수 있음)' : ''}`;
+  }
   function onCamSel() {
+    showModes();
     const uvc = $('camSel').value === '__uvc__';
     $('camFps').style.display = uvc ? 'none' : ''; $('camFpsL').style.display = uvc ? 'none' : '';
     const want = uvc ? uvcOptions() : WEB_RES;
@@ -799,7 +809,7 @@
         if (Array.isArray(m.modes) && m.modes.length) { NATIVE.modes = m.modes; try { localStorage.setItem('psg-uvc-modes', JSON.stringify(m.modes)); } catch (e) { } }
         if (m.sizes || m.modes) onCamSel();
         guessShutter(m.device);
-        NATIVE.info = `${m.device || 'USB 카메라 없음'}${m.size ? ' · ' + m.size : ''}${m.modeType ? ' ' + m.modeType : ''}${m.modeFps ? ` · 카메라 설정 ${m.modeFps}fps` : ''}${m.fps ? ` · 수신 ${m.fps.toFixed(0)}fps` : ''}${m.drops ? ` · 버림 ${m.drops}` : ''}`;
+        NATIVE.info = `${m.device || 'USB 카메라 없음'}${m.size ? ' · ' + m.size : ''}${m.modeType ? ' ' + m.modeType : ''}${m.modeFps ? ` · 카메라 설정 ${m.modeFps}fps` : ''}${m.fps ? ` · 폰 수신 ${m.fps.toFixed(0)}fps` : ''}${m.drops ? ` · 버림 ${m.drops}` : ''}`;
         if (!NATIVE.run) $('camInfo').textContent = NATIVE.info;
         if (m.msg) $('camMsg').textContent = m.msg;
         if (m.state === 'error') { camWarn(m.msg); chip('USB 카메라 오류', 'err'); }
@@ -848,7 +858,7 @@
     const now = performance.now();
     if (now - NATIVE.tf > 1000) {
       const fps = NATIVE.n * 1000 / (now - NATIVE.tf); NATIVE.n = 0; NATIVE.tf = now;
-      $('camInfo').textContent = `${NATIVE.info} · 처리 ${w}×${h} @ ${fps.toFixed(0)} fps${NATIVE.ts?.dt ? ` · 프레임간격 ${(NATIVE.ts.dt * 1000).toFixed(1)} ms` : ''}`;
+      $('camInfo').textContent = `${NATIVE.info} · 웹앱 처리 ${w}×${h} @ ${fps.toFixed(0)} fps${NATIVE.ts?.dt ? ` · 프레임간격 ${(NATIVE.ts.dt * 1000).toFixed(1)} ms` : ''}`;
       if (fps > 0 && chipEl().textContent.startsWith('USB 카메라 연결')) chip('USB 카메라 실행 중', 'live');
     }
     if (out.shot) fromDetector(out.shot, 'USB');

@@ -70,7 +70,7 @@ h3{font-size:13px;margin:14px 0 6px;color:var(--acc2)}
 </style>
 </head>
 <body>
-<header><h1>⛳ 폰 스크린골프 <b>Tracker</b> <span style="font-size:10px;font-weight:600;color:var(--mut,#8aa);margin-left:4px">v0.12</span> <span id="appBadge" style="display:none;font-size:10px;font-weight:600;color:#0b1510;background:var(--acc2);padding:2px 6px;border-radius:6px;vertical-align:middle">APP</span></h1><span id="chip">대기</span></header>
+<header><h1>⛳ 폰 스크린골프 <b>Tracker</b> <span style="font-size:10px;font-weight:600;color:var(--mut,#8aa);margin-left:4px">v0.13</span> <span id="appBadge" style="display:none;font-size:10px;font-weight:600;color:#0b1510;background:var(--acc2);padding:2px 6px;border-radius:6px;vertical-align:middle">APP</span></h1><span id="chip">대기</span></header>
 <div class="wrap">
   <div id="stage">
     <canvas id="field"></canvas>
@@ -95,6 +95,7 @@ h3{font-size:13px;margin:14px 0 6px;color:var(--acc2)}
         <button class="primary" id="camStart" style="margin-left:auto">카메라 시작</button></div>
       <canvas id="preview" width="480" height="360"></canvas>
       <div class="msg" id="camMsg">카메라를 시작하세요.</div>
+      <div class="row" style="font-size:12px;color:var(--mute)"><span id="camModes"></span></div>
       <div class="row" style="font-size:12px;color:var(--mute)"><span id="camInfo"></span><button class="ghost" id="camReset" style="margin-left:auto;padding:6px 10px">공 다시 찾기</button></div>
       <div class="note" style="margin:6px 0"><b>공 인식</b> — 정해진 거리(0.3~0.5m)에서의 골프공 크기, 윤곽이 원인지, 구 특유의 명암이 있는지로 공을 고릅니다. 흰 종이·매트 흰 줄·큰 흰 원은 무시합니다. <b>처음 한 번 미리보기에서 공을 탭</b>하면 실제 공 크기를 학습해 더 정확해집니다.</div>
       <div class="row"><label style="min-width:auto">클럽</label><select id="sClub"><option value="auto">자동 (티 위 → 드라이버 · 지면 → 7번 아이언)</option><option value="driver">드라이버</option><option value="wood3">3번 우드</option><option value="iron7">7번 아이언</option><option value="pw">피칭웨지</option></select></div>
